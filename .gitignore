@@ -10,8 +10,6 @@
 *.iso.sha256
 *.iso.json
 *.exe
-*.vhd
-*.vhdx
 *.log
 *.key
 *credentials*.json
