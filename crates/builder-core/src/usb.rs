@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::image::Writer;
+use crate::{Project, plan};
 
 const HELPER: &str = include_str!("usb_writer.ps1");
 
@@ -116,6 +117,32 @@ pub fn install_prepared_with_progress(
     preflight: bool,
     mut on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
+    install_prepared_with_settings(
+        iso,
+        efi_dir,
+        expected_iso,
+        disk_number,
+        disk_unique_id,
+        disk_bytes,
+        report_dir,
+        preflight,
+        None,
+        &mut on_progress,
+    )
+}
+
+pub fn install_prepared_with_settings(
+    iso: &Path,
+    efi_dir: &Path,
+    expected_iso: &str,
+    disk_number: u32,
+    disk_unique_id: &str,
+    disk_bytes: u64,
+    report_dir: &Path,
+    preflight: bool,
+    settings: Option<&Project>,
+    mut on_progress: impl FnMut(UsbProgress),
+) -> Result<(), String> {
     if !cfg!(windows) {
         return Err("USB installation requires Windows".into());
     }
@@ -164,7 +191,7 @@ pub fn install_prepared_with_progress(
     }
     fs::create_dir_all(report_dir).map_err(|e| e.to_string())?;
     let report_dir = ordinary_windows_path(&report_dir.canonicalize().map_err(|e| e.to_string())?)?;
-    let request = json!({
+    let mut request = json!({
         "iso": iso,
         "efi_dir": efi_dir,
         "iso_sha256": expected_iso.to_ascii_lowercase(),
@@ -174,6 +201,13 @@ pub fn install_prepared_with_progress(
         "disk_bytes": disk_bytes,
         "report_dir": report_dir,
     });
+    if let Some(project) = settings {
+        let config = plan(project).map_err(str::to_owned)?;
+        let path = report_dir.join("live-config.json");
+        fs::write(&path, config).map_err(|e| e.to_string())?;
+        request["config_path"] = json!(path);
+        request["config_sha256"] = json!(Writer::base_digest(&path)?);
+    }
     let request_path = report_dir.join("request.json");
     let helper_path = report_dir.join("usb_writer.ps1");
     fs::write(
@@ -232,6 +266,7 @@ pub fn install_prepared_with_progress(
         || value["data_volume_label"] != "CRISPAWN"
         || value["data_directory"] != "crispawn"
         || value["readback_verified"] != true
+        || (settings.is_some() && value["config_sha256"] != request["config_sha256"])
     {
         return Err("USB result verification failed".into());
     }

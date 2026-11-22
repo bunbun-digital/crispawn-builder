@@ -6,8 +6,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json
 $expectedKeys = @('iso','efi_dir','iso_sha256','efi_sha256','disk_number','disk_unique_id','disk_bytes','report_dir')
-if ((@($request.PSObject.Properties.Name | Sort-Object) -join ',') -cne
-    (@($expectedKeys | Sort-Object) -join ',')) {
+$actualKeys = @($request.PSObject.Properties.Name | Sort-Object) -join ','
+$baseKeys = @($expectedKeys | Sort-Object) -join ','
+$configuredKeys = @($expectedKeys + @('config_path','config_sha256') | Sort-Object) -join ','
+if ($actualKeys -cne $baseKeys -and $actualKeys -cne $configuredKeys) {
     throw 'Invalid Builder USB request.'
 }
 if ($request.iso_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
@@ -79,6 +81,19 @@ function Assert-Inputs {
         if ($expected -cnotmatch '^[0-9a-f]{64}$' -or
             (FileHash (Join-Path $request.efi_dir $name)) -cne $expected) {
             throw 'Signed EFI file changed.'
+        }
+    }
+    if ($actualKeys -ceq $configuredKeys) {
+        $expectedConfig = Join-Path ([IO.Path]::GetFullPath([string]$request.report_dir)) 'live-config.json'
+        if ([IO.Path]::GetFullPath([string]$request.config_path) -cne $expectedConfig -or
+            $request.config_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Invalid LiveOS settings path or digest.'
+        }
+        $configFile = Get-Item -LiteralPath $expectedConfig -Force -ErrorAction Stop
+        if ($configFile.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+            $configFile.Length -lt 1 -or $configFile.Length -gt 65536 -or
+            (FileHash $expectedConfig) -cne $request.config_sha256) {
+            throw 'LiveOS settings changed.'
         }
     }
 }
@@ -196,6 +211,14 @@ sleep 30
         [IO.File]::WriteAllText($destination,$cfg,[Text.Encoding]::ASCII)
         if ([IO.File]::ReadAllText($destination) -cne $cfg) { throw 'GRUB media readback mismatch.' }
     }
+    if ($actualKeys -ceq $configuredKeys) {
+        $null = Assert-Target
+        $configTarget = Join-Path $mount 'perfect-backup.json'
+        Copy-Item -LiteralPath $request.config_path -Destination $configTarget -Force -ErrorAction Stop
+        if ((FileHash $configTarget) -cne $request.config_sha256) {
+            throw 'LiveOS settings readback mismatch.'
+        }
+    }
     Report-Progress 'verifyingFinal' 95
     if ((FileHash $isoTarget) -cne $request.iso_sha256) { throw 'Final ISO readback mismatch.' }
     if (Test-Path -LiteralPath $legacyDirectory) {
@@ -222,6 +245,7 @@ sleep 30
         data_uuid = $dataUuid
         iso_name = $isoName
         iso_sha256 = [string]$request.iso_sha256
+        config_sha256 = if ($actualKeys -ceq $configuredKeys) { [string]$request.config_sha256 } else { $null }
         network_profile = 'none'
         ntfs_preserved = $true
         data_volume_label = 'CRISPAWN'

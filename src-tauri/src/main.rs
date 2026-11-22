@@ -70,10 +70,8 @@ async fn save_usb(
     ui_language: String,
 ) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !settings.source_ids.is_empty() || settings.language != SettingsLanguage::Ja
-            || settings.start_seconds != 30 || settings.poweroff_seconds != Some(5) {
-            return Err("The selected ISO has different startup or source settings. Select a matching ISO release.".into());
-        }
+        let project = settings.project();
+        plan(&project)?;
         match pc_mode.as_str() {
             "local" => {
                 let internal = usb::list_internal()?;
@@ -120,8 +118,8 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_prepared_with_progress(&staged_iso, &efi_dir, &expected, disk.disk_number,
-            &disk.unique_id, disk.size_bytes, &report, false, |progress| {
+        usb::install_prepared_with_settings(&staged_iso, &efi_dir, &expected, disk.disk_number,
+            &disk.unique_id, disk.size_bytes, &report, false, Some(&project), |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
         Ok(true)
