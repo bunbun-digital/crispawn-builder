@@ -49,8 +49,7 @@ Tests cover settings validation, ISO and initramfs handling, USB layout checks, 
 | Path | Purpose |
 | --- | --- |
 | `.cargo/config.toml` | Keeps Rust build output under the ignored `build/rust/` directory |
-| `index.html` | Vite entry point that mounts the React interface |
-| `ui/` | React interface and language strings |
+| `ui/` | Vite entry point, React interface, and language strings |
 | `src-tauri/` | Tauri desktop shell and Windows dialogs |
 | `crates/builder-core/` | Settings, ISO, EFI, USB, and Hyper-V controllers plus CLI |
 | `config/crispawn/` | Example LiveOS settings |
