@@ -1,0 +1,48 @@
+{
+  "kind": "crispawn.live",
+  "schema_version": 2,
+  "sources": {
+    "mode": "all_internal"
+  },
+  "destination": {
+    "kind": "usb_disk",
+    "filesystem": "ntfs",
+    "volume": {
+      "mode": "boot_disk_data"
+    },
+    "backup_directory": "crispawn/backups"
+  },
+  "startup": {
+    "mode": "auto_copy",
+    "delay_seconds": 30
+  },
+  "completion": {
+    "action": "poweroff",
+    "delay_seconds": 5
+  },
+  "ui": {
+    "mode": "gui",
+    "language": "ja"
+  },
+  "logging": {
+    "policy": "always",
+    "sync_interval_ms": 0
+  },
+  "processing": {
+    "mode": "auto",
+    "initial_profile": "balanced",
+    "io_policy": {
+      "no_progress_seconds": 180,
+      "failure_grace_seconds": 5,
+      "shutdown_grace_seconds": 20,
+      "transient_retries": 3,
+      "retry_delay_ms": 100
+    }
+  },
+  "network": {
+    "mode": "none"
+  },
+  "diagnostics": {
+    "probe_interval_ms": 250
+  }
+}

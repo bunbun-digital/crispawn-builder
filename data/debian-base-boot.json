@@ -1,0 +1,60 @@
+{
+  "kind": "crispawn.development_efi_files",
+  "schema_version": 1,
+  "official_release": false,
+  "archive_signed": false,
+  "distribution": "Debian",
+  "architecture": "x86_64",
+  "kernel_release": "6.12.117+deb13-amd64",
+  "kernel_sha256": "14159c607ad9762133db41e479dafecde1d6a5fe715a8d65d292a3262e4b6bed",
+  "efi_vendor": "debian",
+  "files": {
+    "shimx64.efi": {
+      "bytes": 1036152,
+      "sha256": "e103c5d02657879f141b086ed703584d28bb9e2721b423333be085ee1b4d397b"
+    },
+    "grubx64.efi": {
+      "bytes": 2684352,
+      "sha256": "970bccf30d50a10b6f8559474a8de0f61218431c0f969a22231f8c8542573565"
+    },
+    "mmx64.efi": {
+      "bytes": 873904,
+      "sha256": "30ea13138310f0819c1d875fcf3a6cdce8a1607cfd7578053a2df894a41630ae"
+    }
+  },
+  "packages": {
+    "kernel": {
+      "package": "linux-image-6.12.117+deb13-amd64",
+      "version": "6.12.117-1",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/l/linux-signed-amd64/linux-image-6.12.117%2Bdeb13-amd64_6.12.117-1_amd64.deb",
+      "bytes": 108488460,
+      "sha256": "ca712d36790184f6ac125ce2b20ea4e2202ae6bb7817b7de268f1f0115ccda73"
+    },
+    "shim": {
+      "package": "shim-signed",
+      "version": "1.51~1+deb13u1+16.1-2~deb13u1",
+      "url": "https://deb.debian.org/debian/pool/main/s/shim-signed/shim-signed_1.51~1%2Bdeb13u1%2B16.1-2~deb13u1_amd64.deb",
+      "bytes": 346976,
+      "sha256": "3c802fa303c0e6bf126adee74028d1042e3120360d159c2c05181dc9b2f61005"
+    },
+    "grub": {
+      "package": "grub-efi-amd64-signed",
+      "version": "1+2.12+9+deb13u4",
+      "url": "https://deb.debian.org/debian/pool/main/g/grub-efi-amd64-signed/grub-efi-amd64-signed_1%2B2.12%2B9%2Bdeb13u4_amd64.deb",
+      "bytes": 1363612,
+      "sha256": "9090ac76b1bb4d009298583c6e5af1e7b2cae8bce96a40d42a271eb2f750b536"
+    },
+    "helpers": {
+      "package": "shim-helpers-amd64-signed",
+      "version": "1+16.1+2~deb13u1",
+      "url": "https://deb.debian.org/debian/pool/main/s/shim-helpers-amd64-signed/shim-helpers-amd64-signed_1%2B16.1%2B2~deb13u1_amd64.deb",
+      "bytes": 301476,
+      "sha256": "7e950d75d5a40ecc0a99f727452ce35780b47a04d9a2cc3b1ff7c2bb316c033e"
+    }
+  },
+  "qemu_secure_boot_verified": true,
+  "hyperv_tested": false,
+  "physical_devices_tested": false,
+  "network_driver_profile": "none",
+  "network_hardware_drivers": false
+}

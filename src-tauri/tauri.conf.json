@@ -1,0 +1,16 @@
+{
+  "productName": "CRISPAWN Builder",
+  "version": "0.1.0",
+  "identifier": "digital.bunbun.crispawn.builder",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../build/ui"
+  },
+  "app": {
+    "windows": [{ "title": "CRISPAWN Builder", "width": 1180, "height": 820, "minWidth": 560 }],
+    "security": { "csp": "default-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost" }
+  },
+  "bundle": { "active": false }
+}
