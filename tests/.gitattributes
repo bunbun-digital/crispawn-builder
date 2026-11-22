@@ -1,2 +1,0 @@
-# Keep PowerShell fixture scripts consistent across checkouts.
-*.ps1 text eol=lf

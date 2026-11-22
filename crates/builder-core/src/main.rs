@@ -13,7 +13,6 @@ const HELP: &str = "Usage: crispawn-builder plan [settings]\n\
     crispawn-builder disk-list\n\
     crispawn-builder efi-extract BASE.iso OUTPUT_DIRECTORY\n\
     crispawn-builder usb BASE.iso EFI_DIRECTORY ISO_SHA256 DISK_NUMBER DISK_UNIQUE_ID DISK_BYTES REPORT_DIR [--preflight]\n\
-    crispawn-builder test-iso OUTPUT.iso OUTPUT_SHA256 ja|en\n\
     Settings: [--language ja|en] [--source-id LINUX_ID]... [--start-seconds N] [--poweroff-seconds N | --stay]";
 
 fn run() -> Result<(), String> {
@@ -82,21 +81,6 @@ fn run() -> Result<(), String> {
                 &report_dir,
                 preflight,
             )?;
-            return Ok(());
-        }
-        Some("test-iso") => {
-            let path = PathBuf::from(args.next().ok_or(HELP)?);
-            let digest = args.next().ok_or(HELP)?;
-            let language = match args.next().as_deref() {
-                Some("en") => Language::English,
-                Some("ja") => Language::Japanese,
-                _ => return Err(HELP.into()),
-            };
-            if args.next().is_some() {
-                return Err(HELP.into());
-            }
-            crispawn_builder_core::hyperv::test_iso(&path, &digest, language)?;
-            println!("Secure Boot test passed: {}", path.display());
             return Ok(());
         }
         Some("iso") => Some((

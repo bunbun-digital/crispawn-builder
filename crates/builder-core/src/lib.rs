@@ -3,7 +3,6 @@
 mod cpio;
 pub mod efi;
 mod fat12;
-pub mod hyperv;
 pub mod image;
 mod iso9660;
 pub mod runtime;

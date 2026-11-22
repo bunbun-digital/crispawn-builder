@@ -42,7 +42,7 @@ npm run build
 & "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable build --locked -p crispawn-builder-desktop --features custom-protocol
 ```
 
-Tests cover settings validation, ISO and initramfs handling, USB layout checks, FAT extraction, and rejection of unknown ISOs. A build or fixture test does not establish that a physical USB boots or completes a backup. Record real hardware and Hyper-V acceptance separately.
+Tests cover settings validation, ISO and initramfs handling, USB layout checks, FAT extraction, and rejection of unknown ISOs. A build or fixture test does not establish that a physical USB boots or completes a backup. Record real hardware acceptance separately.
 
 ## Repository layout
 
@@ -51,7 +51,7 @@ Tests cover settings validation, ISO and initramfs handling, USB layout checks, 
 | `.cargo/config.toml` | Keeps Rust build output under the ignored `build/rust/` directory |
 | `ui/` | Vite entry point, React interface, and language strings |
 | `src-tauri/` | Tauri desktop shell and Windows dialogs |
-| `crates/builder-core/` | Settings, ISO, EFI, USB, and Hyper-V controllers plus CLI |
+| `crates/builder-core/` | Settings, ISO, EFI, and USB controllers plus CLI |
 | `config/crispawn/` | Example LiveOS settings |
 | `data/` | Pinned development boot metadata |
 | `assets/crispawn/` | Separately licensed CRISPAWN artwork and screenshots |

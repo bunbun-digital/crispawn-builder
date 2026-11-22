@@ -53,7 +53,6 @@
     }
   },
   "qemu_secure_boot_verified": true,
-  "hyperv_tested": false,
   "physical_devices_tested": false,
   "network_driver_profile": "none",
   "network_hardware_drivers": false
