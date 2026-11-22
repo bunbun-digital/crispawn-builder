@@ -22,7 +22,9 @@ Windows、対応するCRISPAWN LiveOSのISO、準備済みUSBが必要です。U
 
 ISOは100,000,000バイト未満で、`/boot/crispawn-media.json`を含み、[`data/debian-base-boot.json`](data/debian-base-boot.json)に記録された開発用リリースのカーネル・EFIファイルと一致する必要があります。BuilderはISOやEFIファイルをネットから取得しません。
 
-ベースISOから**設定入りISOを生成**する場合は、別途Python 3とxorrisoが必要です。信頼できる実行ファイルの絶対パスを`CRISPAWN_PYTHON`と`CRISPAWN_XORRISO`に設定します。設定済みISOをUSBに書き込むGUI操作には不要です。
+ベースISOからの**設定入りISO生成**は、デスクトップアプリとCLIだけで実行できます。Python、xorriso、補助EXEのインストールや環境変数の設定は不要です。対応するベースISOを選び、信頼できる配布元で確認したSHA-256を入力してください。
+
+runtime v2のベースISOには、initramfs内の`/etc/perfect-backup/release-capabilities.json`に対応設定の宣言が必要です。このファイルがないv2のISOは拒否します。ISOの配布元で宣言を含めて生成する必要があります。
 
 ## ソースからビルド
 

@@ -1,9 +1,11 @@
 // Copyright (c) 2026 bunbun-digital and contributors. SPDX-License-Identifier: Apache-2.0
 
+mod cpio;
 pub mod efi;
 mod fat12;
 pub mod hyperv;
 pub mod image;
+mod iso9660;
 pub mod runtime;
 pub mod usb;
 

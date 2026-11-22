@@ -140,7 +140,7 @@ fn run() -> Result<(), String> {
         }
     }
     if let Some((source, output, digest)) = iso {
-        let writer = Writer::from_environment()?;
+        let writer = Writer::new();
         writer.configure(&project, &source, &output, &digest)?;
         println!("ISO configured and verified: {}", output.display());
         return Ok(());

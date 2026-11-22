@@ -25,7 +25,9 @@ You need Windows, a compatible CRISPAWN LiveOS ISO, and a USB drive that has alr
 
 The selected ISO must be smaller than 100,000,000 bytes, contain `/boot/crispawn-media.json` with the CRISPAWN data layout, and contain the kernel and Debian signed EFI files matching the pinned development release metadata in [`data/debian-base-boot.json`](data/debian-base-boot.json). This pin is a compatibility and integrity check for the currently supported release, not a general signature verification service. The Builder does not download the ISO or its boot files.
 
-For **ISO creation** from a base ISO, also install Python 3 and xorriso. Set `CRISPAWN_PYTHON` and `CRISPAWN_XORRISO` to absolute paths to the trusted executables. The GUI's USB flow can use an already configured ISO without these two tools.
+The desktop app and CLI create a configured ISO directly. No Python, xorriso, helper executable, or environment variable is required at runtime. Choose a compatible base ISO and provide its SHA-256 from a trusted source.
+
+A base ISO that uses runtime v2 must include `/etc/perfect-backup/release-capabilities.json` in its initramfs and declare support for the requested settings. The Builder rejects a v2 base without this release metadata; the ISO producer must add it to the release.
 
 ## Build from source
 
@@ -78,7 +80,7 @@ The core tests cover settings validation, USB layout checks, FAT extraction, and
 | `ui/` | React user interface and language strings |
 | `src-tauri/` | Tauri desktop shell and Windows dialogs |
 | `crates/builder-core/` | Settings, ISO, EFI, USB, and Hyper-V controllers plus CLI |
-| `tools/` | ISO settings writer and small ISO utilities |
+| `crates/builder-core/src/image.rs` | Built-in ISO settings writer |
 | `config/crispawn/` | Example LiveOS settings used by the Builder |
 | `data/` | Pinned development boot metadata |
 | `assets/crispawn/` | Separately licensed CRISPAWN product artwork |

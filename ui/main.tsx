@@ -36,7 +36,6 @@ function App() {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [isoAvailable, setIsoAvailable] = useState(false);
   const [hypervAvailable, setHypervAvailable] = useState(false);
   const [testBoot, setTestBoot] = useState(false);
   const [output, setOutput] = useState("usb");
@@ -53,7 +52,6 @@ function App() {
     .map(disk => disk.friendlyName).join(", ") || t.noSelectedDisks;
 
   useEffect(() => {
-    invoke<boolean>("iso_available").then(setIsoAvailable).catch(() => setIsoAvailable(false));
     invoke<boolean>("hyperv_available").then(setHypervAvailable).catch(() => setHypervAvailable(false));
     void refreshUsb();
     void refreshInternal();
@@ -255,7 +253,7 @@ function App() {
               <section className="output">
                 <h2>{t.output}</h2>
                 <select aria-label={t.output} value={output} onChange={event => setOutput(event.target.value)}>
-                  <option value="iso" disabled={!isoAvailable}>{t.iso}{!isoAvailable && ` · ${t.unavailable}`}</option>
+                  <option value="iso">{t.iso}</option>
                   <option value="usb">{t.bootUsb}</option>
                 </select>
                 {output === "iso" ? <>
@@ -280,7 +278,6 @@ function App() {
                   </div>
                   <button type="button" onClick={() => void refreshUsb()}>{t.usbRefresh}</button>
                 </> : null}
-                {output === "iso" && !isoAvailable && <p>{t.isoTools}</p>}
               </section>
             </div>}
           </fieldset>

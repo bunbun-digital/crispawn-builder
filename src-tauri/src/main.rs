@@ -49,11 +49,6 @@ fn plan_settings(settings: Settings) -> Result<String, &'static str> {
 }
 
 #[tauri::command]
-fn iso_available() -> bool {
-    Writer::from_environment().is_ok()
-}
-
-#[tauri::command]
 fn hyperv_available() -> bool {
     crispawn_builder_core::hyperv::available()
 }
@@ -157,7 +152,7 @@ async fn save_iso(
     base_sha256: String,
     test_boot: Option<bool>,
 ) -> Result<bool, String> {
-    let writer = Writer::from_environment()?;
+    let writer = Writer::new();
     let project = settings.project();
     plan(&project)?;
     let test_boot = test_boot.unwrap_or(false);
@@ -221,7 +216,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             plan_settings,
-            iso_available,
             hyperv_available,
             prepared_usb_disks,
             internal_disks,
