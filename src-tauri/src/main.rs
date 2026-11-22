@@ -1,8 +1,6 @@
 // Copyright (c) 2026 bunbun-digital and contributors. SPDX-License-Identifier: Apache-2.0
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io::Read;
-
 use crispawn_builder_core::efi;
 use crispawn_builder_core::image::Writer;
 use crispawn_builder_core::usb::{self, InternalDisk, PreparedUsbDisk};
@@ -46,11 +44,6 @@ impl Settings {
 #[tauri::command]
 fn plan_settings(settings: Settings) -> Result<String, &'static str> {
     plan(&settings.project())
-}
-
-#[tauri::command]
-fn hyperv_available() -> bool {
-    crispawn_builder_core::hyperv::available()
 }
 
 #[tauri::command]
@@ -150,12 +143,10 @@ async fn save_iso(
     app: tauri::AppHandle,
     settings: Settings,
     base_sha256: String,
-    test_boot: Option<bool>,
 ) -> Result<bool, String> {
     let writer = Writer::new();
     let project = settings.project();
     plan(&project)?;
-    let test_boot = test_boot.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let Some(source) = app
             .dialog()
@@ -177,34 +168,6 @@ async fn save_iso(
         let source = source.into_path().map_err(|error| error.to_string())?;
         let output = output.into_path().map_err(|error| error.to_string())?;
         writer.configure(&project, &source, &output, &base_sha256)?;
-        if test_boot {
-            let mut metadata = output.as_os_str().to_os_string();
-            metadata.push(".json");
-            let metadata: serde_json::Value =
-                serde_json::from_reader(std::fs::File::open(metadata).map_err(
-                    |_| "ISO saved. Could not check whether it contains Wi-Fi credentials.",
-                )?)
-                .map_err(|_| "ISO saved. Could not check whether it contains Wi-Fi credentials.")?;
-            if metadata
-                .get("contains_network_credentials")
-                .and_then(serde_json::Value::as_bool)
-                != Some(false)
-            {
-                return Err(
-                    "ISO saved. Hyper-V testing is unavailable for ISOs with Wi-Fi credentials."
-                        .into(),
-                );
-            }
-            let mut sidecar = output.as_os_str().to_os_string();
-            sidecar.push(".sha256");
-            let mut digest = [0; 64];
-            std::fs::File::open(sidecar)
-                .and_then(|mut file| file.read_exact(&mut digest))
-                .map_err(|err| format!("ISO saved; could not read its checksum: {err}"))?;
-            let expected = std::str::from_utf8(&digest).map_err(|err| err.to_string())?;
-            crispawn_builder_core::hyperv::test_iso(&output, expected, project.language)
-                .map_err(|err| format!("ISO saved. {err}"))?;
-        }
         Ok(true)
     })
     .await
@@ -216,7 +179,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             plan_settings,
-            hyperv_available,
             prepared_usb_disks,
             internal_disks,
             save_usb,

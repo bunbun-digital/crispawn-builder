@@ -36,8 +36,6 @@ function App() {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [hypervAvailable, setHypervAvailable] = useState(false);
-  const [testBoot, setTestBoot] = useState(false);
   const [output, setOutput] = useState("usb");
   const [baseSha256, setBaseSha256] = useState("");
   const [usbDisks, setUsbDisks] = useState<PreparedUsbDisk[]>([]);
@@ -52,7 +50,6 @@ function App() {
     .map(disk => disk.friendlyName).join(", ") || t.noSelectedDisks;
 
   useEffect(() => {
-    invoke<boolean>("hyperv_available").then(setHypervAvailable).catch(() => setHypervAvailable(false));
     void refreshUsb();
     void refreshInternal();
   }, []);
@@ -131,12 +128,11 @@ function App() {
           setStep(2);
         }
       } else if (output === "iso") {
-        const verifyBoot = testBoot;
         setStep(3);
         if (await invoke<boolean>("save_iso", {
-          settings, baseSha256, testBoot: verifyBoot,
+          settings, baseSha256,
         })) {
-          setMessage(verifyBoot ? t.bootPassed : t.isoSaved);
+          setMessage(t.isoSaved);
           setStep(4);
         } else setStep(2);
       }
@@ -258,8 +254,6 @@ function App() {
                 </select>
                 {output === "iso" ? <>
                   <p>{t.isoHelp}</p>
-                  {hypervAvailable && <label className="boot-test"><input type="checkbox"
-                    checked={testBoot} onChange={event => setTestBoot(event.target.checked)} />{t.bootTest}</label>}
                   <label>{t.baseDigest}<input required pattern="[0-9a-fA-F]{64}" value={baseSha256}
                     onChange={event => setBaseSha256(event.target.value)} /></label>
                 </> : output === "usb" ? <>

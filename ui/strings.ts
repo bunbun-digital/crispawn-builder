@@ -1,6 +1,5 @@
 export const strings = {
   ja: {
-    bootTest: "保存後にHyper-Vで起動確認", bootPassed: "ISOを保存し、Hyper-VでSecure Boot起動と表示言語を確認しました。",
     steps: ["コピー対象", "コピー保存先", "確認", "書き込み中", "完了"], uiLanguage: "アプリの言語",
     pc: "使用するPC", local: "このPC", other: "他のPC（1機種に限定しない設定）",
     unavailable: "未対応", disks: "コピーするディスク", all: "すべての内蔵ディスク", diskNumber: "ディスク",
@@ -37,7 +36,6 @@ export const strings = {
     back: "戻る", next: "次へ", saving: "保存中…",
   },
   en: {
-    bootTest: "Test in Hyper-V after saving", bootPassed: "ISO saved. Secure Boot and the display language were verified in Hyper-V.",
     steps: ["Copy sources", "Copy destination", "Review", "Writing", "Complete"], uiLanguage: "App language",
     pc: "Target PC", local: "This PC", other: "Another PC (generic hardware profile)",
     unavailable: "Unavailable", disks: "Disks to copy", all: "All internal disks", diskNumber: "Disk",

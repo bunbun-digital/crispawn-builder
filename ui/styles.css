@@ -73,8 +73,6 @@ button, select, input, textarea {
 }
 select, input, textarea { width: 100%; min-width: 0; }
 textarea { resize: vertical; }
-.boot-test { display: flex; align-items: center; gap: 8px; }
-.boot-test input { width: auto; }
 button:enabled { cursor: pointer; }
 button:enabled:hover { border-color: #58789a; }
 :focus-visible { outline: 2px solid #1578ad; outline-offset: 2px; }

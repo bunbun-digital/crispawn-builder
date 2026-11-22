@@ -4,6 +4,8 @@ Thank you for contributing to CRISPAWN Builder. This repository contains the Win
 
 ## Development
 
+See [BUILDING.md](BUILDING.md) for the Windows build and verification commands.
+
 1. Open an issue before a large change so the intended behavior and compatibility can be discussed.
 2. Keep the Rust core, Tauri shell, and React interface separate. Use the same core for GUI and CLI operations.
 3. Run `npm run build` and `cargo +stable test --locked -p crispawn-builder-core` on Windows. Build the desktop application when changing its commands or capabilities.
