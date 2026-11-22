@@ -1,7 +1,5 @@
 # Build CRISPAWN Builder
 
-[日本語](BUILDING.ja.md)
-
 This guide is for developers building the Windows community edition from source. For normal operation, see [README.md](README.md). Building from source requires developer tools; running the resulting application does not require Python or xorriso.
 
 ## Requirements
@@ -50,6 +48,8 @@ Tests cover settings validation, ISO and initramfs handling, USB layout checks, 
 
 | Path | Purpose |
 | --- | --- |
+| `.cargo/config.toml` | Keeps Rust build output under the ignored `build/rust/` directory |
+| `index.html` | Vite entry point that mounts the React interface |
 | `ui/` | React interface and language strings |
 | `src-tauri/` | Tauri desktop shell and Windows dialogs |
 | `crates/builder-core/` | Settings, ISO, EFI, USB, and Hyper-V controllers plus CLI |

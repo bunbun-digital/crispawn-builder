@@ -42,4 +42,4 @@ runtime v2のベースISOから設定入りISOを作るには、対応設定を�
 
 OSS版のバックアップ保存先はローカルUSBです。SMB、S3、Wi-Fi設定、ドライバー組み込みには対応していません。
 
-ソースからのビルドとテストは[BUILDING.ja.md](BUILDING.ja.md)を参照してください。コードは[Apache-2.0](LICENSE)、ロゴとスクリーンショットは[別ライセンス](assets/crispawn/LICENSE)です。
+ソースからのビルドとテストは[BUILDING.md](BUILDING.md)を参照してください。コードは[Apache-2.0](LICENSE)、ロゴとスクリーンショットは[別ライセンス](assets/crispawn/LICENSE)です。
