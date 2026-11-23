@@ -1,5 +1,5 @@
 // Copyright (c) 2026 bunbun-digital and contributors. SPDX-License-Identifier: Apache-2.0
-//! Install a verified ISO on an already prepared CRISPAWN USB disk.
+//! Inventory USB bus disks and install a verified ISO on the selected device.
 
 use std::fs;
 use std::path::Path;
@@ -14,6 +14,7 @@ use crate::image::Writer;
 use crate::{Project, plan};
 
 const HELPER: &str = include_str!("usb_writer.ps1");
+const MIN_USB_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +24,22 @@ pub struct PreparedUsbDisk {
     pub unique_id: String,
     pub size_bytes: u64,
     pub drive_letter: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbDisk {
+    pub disk_number: u32,
+    pub friendly_name: String,
+    pub unique_id: String,
+    pub disk_path: String,
+    pub serial_number: String,
+    pub size_bytes: u64,
+    pub drive_letter: Option<String>,
+    pub layout_stamp: String,
+    pub prepared: bool,
+    pub eligible: bool,
+    pub issue: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -56,18 +73,67 @@ pub fn list_internal() -> Result<Vec<InternalDisk>, String> {
 }
 
 pub fn list_prepared() -> Result<Vec<PreparedUsbDisk>, String> {
+    Ok(list_usb()?
+        .into_iter()
+        .filter(|disk| disk.prepared && disk.eligible)
+        .map(|disk| PreparedUsbDisk {
+            disk_number: disk.disk_number,
+            friendly_name: disk.friendly_name,
+            unique_id: disk.unique_id,
+            size_bytes: disk.size_bytes,
+            drive_letter: disk.drive_letter,
+        })
+        .collect())
+}
+
+pub fn list_usb() -> Result<Vec<UsbDisk>, String> {
     if !cfg!(windows) {
         return Err("USB enumeration requires Windows".into());
     }
-    // Fixed, read-only query. Each returned identity is checked again by the
-    // elevated writer immediately before touching a selected device.
-    let script = r#"$items = @(Get-Disk | Where-Object { $_.BusType -eq 'USB' -and -not $_.IsBoot -and -not $_.IsSystem -and $_.PartitionStyle -eq 'GPT' } | ForEach-Object { $disk = $_; $parts = @(Get-Partition -DiskNumber $disk.Number); if ($parts.Count -eq 2 -and $parts[0].GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -and $parts[0].Size -eq 256MB -and $parts[1].GptType -eq '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}') { $volume = Get-Volume -Partition $parts[1]; if ($volume.FileSystem -eq 'NTFS' -and $volume.FileSystemLabel -eq 'CRISPAWN') { $letter = if ($volume.DriveLetter) { [string]$volume.DriveLetter + ':' } else { $null }; [pscustomobject]@{ diskNumber = [int]$disk.Number; friendlyName = [string]$disk.FriendlyName; uniqueId = [string]$disk.UniqueId; sizeBytes = [UInt64]$disk.Size; driveLetter = $letter } } } }); ConvertTo-Json -InputObject $items -Compress"#;
+    // Read-only inventory. BusType USB includes USB HDDs and SSDs as well as flash media.
+    // The elevated helper rechecks identity, layout and safety state before mutation.
+    let script = r#"
+$items = @(Get-Disk | Where-Object { $_.BusType -eq 'USB' } | ForEach-Object {
+    $disk = $_
+    $parts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue | Sort-Object PartitionNumber)
+    $layout = [string]$disk.PartitionStyle + '|' + (($parts | ForEach-Object {
+        [string]$_.PartitionNumber + ':' + [string]$_.Offset + ':' + [string]$_.Size + ':' + [string]$_.GptType + ':' + [string]$_.MbrType
+    }) -join '|')
+    $letters = @($parts | ForEach-Object { Get-Volume -Partition $_ -ErrorAction SilentlyContinue } | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter + ':' })
+    $prepared = $false
+    if ($disk.PartitionStyle -eq 'GPT' -and $parts.Count -eq 2 -and
+        $parts[0].PartitionNumber -eq 1 -and $parts[1].PartitionNumber -eq 2 -and
+        $parts[0].GptType -ieq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -and
+        $parts[0].Size -eq 256MB -and
+        $parts[1].GptType -ieq '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}') {
+        $volume = Get-Volume -Partition $parts[1] -ErrorAction SilentlyContinue
+        $prepared = $volume -and $volume.FileSystem -eq 'NTFS' -and $volume.FileSystemLabel -in @('CRISPAWN','PERFECTBACKUP')
+    }
+    $issue = $null
+    if ($disk.IsBoot -or $disk.IsSystem) { $issue = 'system' }
+    elseif ($disk.IsOffline) { $issue = 'offline' }
+    elseif ($disk.IsReadOnly) { $issue = 'readOnly' }
+    elseif ($disk.Size -lt 536870912) { $issue = 'tooSmall' }
+    elseif (!$disk.Path -and !$disk.UniqueId -and !$disk.SerialNumber) { $issue = 'noIdentity' }
+    [pscustomobject]@{
+        diskNumber = [int]$disk.Number; friendlyName = [string]$disk.FriendlyName
+        uniqueId = [string]$disk.UniqueId; diskPath = [string]$disk.Path
+        serialNumber = [string]$disk.SerialNumber; sizeBytes = [UInt64]$disk.Size
+        driveLetter = if ($letters.Count) { $letters -join ', ' } else { $null }
+        layoutStamp = $layout; prepared = [bool]$prepared
+        eligible = !$issue; issue = $issue
+    }
+}); ConvertTo-Json -InputObject $items -Compress
+"#;
     let result = Command::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
         .map_err(|e| e.to_string())?;
     if !result.status.success() {
-        return Err("Could not enumerate prepared USB disks".into());
+        return Err(format!(
+            "Could not enumerate USB disks: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
     }
     serde_json::from_slice(&result.stdout).map_err(|_| "Invalid USB inventory".into())
 }
@@ -141,13 +207,84 @@ pub fn install_prepared_with_settings(
     report_dir: &Path,
     preflight: bool,
     settings: Option<&Project>,
+    on_progress: impl FnMut(UsbProgress),
+) -> Result<(), String> {
+    install_with_settings(
+        iso,
+        efi_dir,
+        expected_iso,
+        disk_number,
+        disk_unique_id,
+        disk_bytes,
+        report_dir,
+        preflight,
+        settings,
+        None,
+        on_progress,
+    )
+}
+
+pub fn install_selected_with_settings(
+    iso: &Path,
+    efi_dir: &Path,
+    expected_iso: &str,
+    disk: &UsbDisk,
+    report_dir: &Path,
+    settings: &Project,
+    on_progress: impl FnMut(UsbProgress),
+) -> Result<(), String> {
+    if !disk.eligible
+        || (disk.disk_path.is_empty() && disk.unique_id.is_empty() && disk.serial_number.is_empty())
+    {
+        return Err("Selected USB has no safe hardware identity or is unavailable".into());
+    }
+    let current = list_usb()?
+        .into_iter()
+        .find(|candidate| candidate.disk_number == disk.disk_number)
+        .ok_or("Selected USB is no longer connected")?;
+    if current.disk_path != disk.disk_path
+        || current.unique_id != disk.unique_id
+        || current.serial_number != disk.serial_number
+        || current.size_bytes != disk.size_bytes
+        || current.layout_stamp != disk.layout_stamp
+        || current.prepared != disk.prepared
+        || !current.eligible
+    {
+        return Err("Selected USB identity or layout changed. Refresh the USB list.".into());
+    }
+    install_with_settings(
+        iso,
+        efi_dir,
+        expected_iso,
+        disk.disk_number,
+        &disk.unique_id,
+        disk.size_bytes,
+        report_dir,
+        false,
+        Some(settings),
+        Some(disk),
+        on_progress,
+    )
+}
+
+fn install_with_settings(
+    iso: &Path,
+    efi_dir: &Path,
+    expected_iso: &str,
+    disk_number: u32,
+    disk_unique_id: &str,
+    disk_bytes: u64,
+    report_dir: &Path,
+    preflight: bool,
+    settings: Option<&Project>,
+    selected: Option<&UsbDisk>,
     mut on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
     if !cfg!(windows) {
         return Err("USB installation requires Windows".into());
     }
-    if disk_number == 0 || disk_unique_id.is_empty() || disk_bytes < 1_000_000_000 {
-        return Err("Specify the selected removable disk identity and size".into());
+    if (disk_unique_id.is_empty() && selected.is_none()) || disk_bytes < MIN_USB_BYTES {
+        return Err("Specify the selected USB disk identity and size".into());
     }
     if expected_iso.len() != 64 || !expected_iso.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("ISO SHA-256 must be 64 hexadecimal characters".into());
@@ -161,6 +298,7 @@ pub fn install_prepared_with_settings(
         serde_json::from_slice(&fs::read(efi_dir.join("boot.json")).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     if boot["kind"] != "crispawn.development_efi_files"
+        && boot["kind"] != "crispawn.github_release_efi_files"
         || boot["iso_sha256"]
             .as_str()
             .is_none_or(|hash| !hash.eq_ignore_ascii_case(expected_iso))
@@ -201,6 +339,12 @@ pub fn install_prepared_with_settings(
         "disk_bytes": disk_bytes,
         "report_dir": report_dir,
     });
+    if let Some(disk) = selected {
+        request["disk_path"] = json!(disk.disk_path);
+        request["serial_number"] = json!(disk.serial_number);
+        request["layout_stamp"] = json!(disk.layout_stamp);
+        request["initialize"] = json!(!disk.prepared);
+    }
     if let Some(project) = settings {
         let config = plan(project).map_err(str::to_owned)?;
         let path = report_dir.join("live-config.json");
@@ -281,6 +425,7 @@ fn read_progress(path: &Path) -> Option<UsbProgress> {
             progress.phase.as_str(),
             "preparing"
                 | "awaitingApproval"
+                | "initializing"
                 | "writingIso"
                 | "verifyingIso"
                 | "writingBoot"

@@ -10,6 +10,8 @@ use crispawn_builder_core::{Completion, Language, Project, plan};
 const HELP: &str = "Usage: crispawn-builder plan [settings]\n\
     crispawn-builder iso BASE.iso OUTPUT.iso BASE_SHA256 [settings]\n\
     crispawn-builder usb-list\n\
+    crispawn-builder release-iso\n\
+    crispawn-builder release-efi-extract OUTPUT_DIRECTORY\n\
     crispawn-builder disk-list\n\
     crispawn-builder efi-extract BASE.iso OUTPUT_DIRECTORY\n\
     crispawn-builder usb BASE.iso EFI_DIRECTORY ISO_SHA256 DISK_NUMBER DISK_UNIQUE_ID DISK_BYTES REPORT_DIR [--preflight]\n\
@@ -23,13 +25,44 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         Some("plan") => None,
+        Some("release-iso") => {
+            if args.next().is_some() {
+                return Err(HELP.into());
+            }
+            let iso = crispawn_builder_core::release::latest_iso(|_| {})?;
+            println!(
+                "{}\t{}\t{}",
+                iso.tag,
+                if iso.downloaded {
+                    "downloaded"
+                } else {
+                    "cached"
+                },
+                iso.path.display()
+            );
+            return Ok(());
+        }
+        Some("release-efi-extract") => {
+            let output = PathBuf::from(args.next().ok_or(HELP)?);
+            if args.next().is_some() {
+                return Err(HELP.into());
+            }
+            let iso = crispawn_builder_core::release::latest_iso(|_| {})?;
+            crispawn_builder_core::efi::extract_for_github_iso(&iso.path, &output, |_| {})?;
+            println!(
+                "GitHub release {} EFI extracted: {}",
+                iso.tag,
+                output.display()
+            );
+            return Ok(());
+        }
         Some("usb-list") => {
             if args.next().is_some() {
                 return Err(HELP.into());
             }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&crispawn_builder_core::usb::list_prepared()?)
+                serde_json::to_string_pretty(&crispawn_builder_core::usb::list_usb()?)
                     .map_err(|error| error.to_string())?
             );
             return Ok(());

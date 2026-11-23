@@ -28,24 +28,60 @@ const EFI_FILES: [(&str, &str, &[u8; 11]); 3] = [
 pub fn extract_for_iso(
     iso: &Path,
     output: &Path,
-    mut progress: impl FnMut(u8),
+    progress: impl FnMut(u8),
 ) -> Result<String, String> {
-    let mut boot: Value = serde_json::from_str(PINS).map_err(|e| e.to_string())?;
-    if boot["kind"] != "crispawn.development_efi_files" {
+    extract(iso, output, progress, false)
+}
+
+/// Use only after `release::latest_iso` has authenticated the official GitHub
+/// release asset. Record the boot components from that asset rather than pins
+/// from an older release, so a new official ISO can update its kernel and EFI.
+pub fn extract_for_github_iso(
+    iso: &Path,
+    output: &Path,
+    progress: impl FnMut(u8),
+) -> Result<String, String> {
+    extract(iso, output, progress, true)
+}
+
+fn extract(
+    iso: &Path,
+    output: &Path,
+    mut progress: impl FnMut(u8),
+    trusted_github: bool,
+) -> Result<String, String> {
+    let pins: Value = serde_json::from_str(PINS).map_err(|e| e.to_string())?;
+    if pins["kind"] != "crispawn.development_efi_files" {
         return Err("Invalid built-in EFI release metadata.".into());
     }
     let iso_hash = Writer::base_digest(iso)?;
     let kernel = extract_entry(iso, "boot/bzImage", KERNEL_LIMIT)?;
-    if hex::encode(Sha256::digest(&kernel))
-        != boot["kernel_sha256"]
-            .as_str()
-            .ok_or("Missing kernel pin.")?
+    let kernel_hash = hex::encode(Sha256::digest(&kernel));
+    if !trusted_github
+        && kernel_hash
+            != pins["kernel_sha256"]
+                .as_str()
+                .ok_or("Missing kernel pin.")?
     {
         return Err("The ISO kernel does not match the signed EFI release.".into());
     }
     let layout = extract_entry(iso, "boot/crispawn-media.json", LAYOUT_LIMIT)
         .map_err(|_| "Select an ISO with the CRISPAWN USB data layout.".to_string())?;
     verify_data_layout(&layout)?;
+    let mut boot = if trusted_github {
+        json!({
+            "kind": "crispawn.github_release_efi_files",
+            "schema_version": 1,
+            "distribution": "Debian",
+            "architecture": "x86_64",
+            "kernel_sha256": kernel_hash,
+            "network_driver_profile": "none",
+            "network_hardware_drivers": false,
+            "files": {}
+        })
+    } else {
+        pins.clone()
+    };
     progress(2);
     fs::create_dir_all(output).map_err(|e| e.to_string())?;
     let direct_first = extract_entry(iso, EFI_FILES[0].0, EFI_LIMIT);
@@ -64,17 +100,23 @@ pub fn extract_for_iso(
         } else {
             extract_entry(iso, member, EFI_LIMIT)?
         };
-        let expected_size = boot["files"][name]["bytes"]
-            .as_u64()
-            .ok_or("Missing signed EFI size pin.")?;
-        let expected_hash = boot["files"][name]["sha256"]
-            .as_str()
-            .ok_or("Missing signed EFI SHA-256 pin.")?;
-        if data.len() as u64 != expected_size || hex::encode(Sha256::digest(&data)) != expected_hash
+        let actual_hash = hex::encode(Sha256::digest(&data));
+        if !trusted_github
+            && (data.len() as u64
+                != pins["files"][name]["bytes"]
+                    .as_u64()
+                    .ok_or("Missing signed EFI size pin.")?
+                || actual_hash
+                    != pins["files"][name]["sha256"]
+                        .as_str()
+                        .ok_or("Missing signed EFI SHA-256 pin.")?)
         {
             return Err(format!(
                 "Signed EFI file in ISO does not match the release: {member}"
             ));
+        }
+        if trusted_github {
+            boot["files"][name] = json!({ "bytes": data.len(), "sha256": actual_hash });
         }
         fs::write(output.join(name), data).map_err(|e| e.to_string())?;
         progress(6 + index as u8 * 4);

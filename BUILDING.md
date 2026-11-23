@@ -9,7 +9,7 @@ This guide is for developers building the Windows community edition from source.
 - Rust with the MSVC target
 - Microsoft C++ Build Tools and Windows SDK
 
-Dependency versions are pinned in `Cargo.lock` and `package-lock.json`. The LiveOS ISO and Debian signed boot files are separate inputs and are not included in this repository.
+Dependency versions are pinned in `Cargo.lock` and `package-lock.json`. The desktop app downloads the newest published CRISPAWN community ISO from `bunbun-digital/crispawn` and caches it under `%LOCALAPPDATA%\CRISPAWN\Builder\iso-cache`.
 
 ## Desktop application
 
@@ -30,7 +30,7 @@ The executable is `build/rust/debug/crispawn-builder-desktop.exe`. The interface
 & .\build\rust\debug\crispawn-builder.exe --help
 ```
 
-The CLI uses the same Rust controller as the desktop application. `iso BASE.iso OUTPUT.iso BASE_SHA256` creates a configured ISO and its `.sha256` and `.json` sidecars. `plan` previews legacy LiveOS settings; `usb-list` and `disk-list` enumerate devices; `efi-extract` extracts signed boot files from a compatible ISO. The `usb` command requires the selected disk's number, unique ID, and size and revalidates its identity before writing. Use the desktop application for normal USB creation.
+The CLI uses the same Rust controller as the desktop application. `release-iso` checks GitHub and downloads or reuses the latest ISO. The low-level `iso BASE.iso OUTPUT.iso BASE_SHA256` command creates a configured ISO and its `.sha256` and `.json` sidecars for development fixtures. `plan` previews legacy LiveOS settings; `usb-list` enumerates all USB bus disks, including unprepared flash drives, HDDs and SSDs; `disk-list` enumerates internal disks; `efi-extract` extracts pinned signed boot files from a compatible development ISO. The low-level `usb` command requires a prepared disk's number, unique ID, and size. Use the desktop application for automatic initialization and normal USB creation.
 
 ISO configuration is implemented in Rust. It reads the ISO9660 image, updates `/boot/initrd`, reads the settings back, and checks that signed boot files and boot entries are unchanged. No external Python, xorriso, or helper executable is invoked.
 
@@ -40,6 +40,7 @@ ISO configuration is implemented in Rust. It reads the ISO9660 image, updates `/
 npm run build
 & "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable test --locked -p crispawn-builder-core
 & "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable build --locked -p crispawn-builder-desktop --features custom-protocol
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\usb-writer-preflight.ps1
 ```
 
 Tests cover settings validation, ISO and initramfs handling, USB layout checks, FAT extraction, and rejection of unknown ISOs. A build or fixture test does not establish that a physical USB boots or completes a backup. Record real hardware acceptance separately.

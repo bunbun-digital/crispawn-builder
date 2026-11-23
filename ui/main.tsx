@@ -10,7 +10,9 @@ import "./styles.css";
 
 type Language = keyof typeof strings;
 type Step = 0 | 1 | 2 | 3 | 4;
-type PreparedUsbDisk = { diskNumber: number; friendlyName: string; uniqueId: string; sizeBytes: number; driveLetter: string | null };
+type UsbDisk = { diskNumber: number; friendlyName: string; uniqueId: string; diskPath: string; serialNumber: string;
+  sizeBytes: number; driveLetter: string | null; layoutStamp: string; prepared: boolean; eligible: boolean;
+  issue: keyof typeof strings.ja.usbIssue | null };
 type InternalDisk = { diskNumber: number; friendlyName: string; sizeBytes: number; busType: string };
 type UsbPhase = keyof typeof strings.ja.usbProgress;
 type UsbProgress = { phase: UsbPhase; percent: number };
@@ -22,6 +24,8 @@ function ChoiceIcon({ kind }: { kind: "disk" | "usb" }) {
     {kind === "usb" && <><path d="M7 3h10v5H7zM5 8h14v12H5zM9 16h6" /></>}
   </svg></span>;
 }
+
+function usbKey(disk: UsbDisk) { return `${disk.diskNumber}:${disk.diskPath}`; }
 
 function App() {
   const [step, setStep] = useState<Step>(0);
@@ -37,12 +41,11 @@ function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [output, setOutput] = useState("usb");
-  const [baseSha256, setBaseSha256] = useState("");
-  const [usbDisks, setUsbDisks] = useState<PreparedUsbDisk[]>([]);
+  const [usbDisks, setUsbDisks] = useState<UsbDisk[]>([]);
   const [usbDiskId, setUsbDiskId] = useState("");
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
   const t = strings[locale];
-  const selectedUsb = usbDisks.find(disk => disk.uniqueId === usbDiskId);
+  const selectedUsb = usbDisks.find(disk => usbKey(disk) === usbDiskId);
   const writeStage = (usbProgress?.percent ?? 0) >= 73 ? 2 : (usbProgress?.percent ?? 0) >= 25 ? 1 : 0;
   const sourceIds: string[] = [];
   const sourceSummary = pcMode === "other" ? t.all : internalDisks
@@ -70,9 +73,10 @@ function App() {
 
   async function refreshUsb() {
     try {
-      const disks = await invoke<PreparedUsbDisk[]>("prepared_usb_disks");
+      const disks = await invoke<UsbDisk[]>("usb_disks");
       setUsbDisks(disks);
-      setUsbDiskId(current => disks.some(disk => disk.uniqueId === current) ? current : (disks[0]?.uniqueId ?? ""));
+      setUsbDiskId(current => disks.some(disk => usbKey(disk) === current && disk.eligible)
+        ? current : (disks.find(disk => disk.eligible) ? usbKey(disks.find(disk => disk.eligible)!) : ""));
     } catch (failure) {
       setUsbDisks([]);
       setUsbDiskId("");
@@ -112,8 +116,8 @@ function App() {
     try {
       if (output === "usb") {
         const disk = selectedUsb;
-        if (!disk) throw new Error(t.usbSelectDisk);
-        setUsbProgress({ phase: "selectingIso", percent: 0 });
+        if (!disk || !disk.eligible) throw new Error(t.usbSelectDisk);
+        setUsbProgress({ phase: "checkingRelease", percent: 0 });
         unlisten = await listen<UsbProgress>("usb-write-progress", event => {
           setUsbProgress(event.payload);
           setStep(3);
@@ -129,8 +133,10 @@ function App() {
         }
       } else if (output === "iso") {
         setStep(3);
+        setUsbProgress({ phase: "checkingRelease", percent: 0 });
+        unlisten = await listen<UsbProgress>("usb-write-progress", event => setUsbProgress(event.payload));
         if (await invoke<boolean>("save_iso", {
-          settings, baseSha256,
+          settings,
         })) {
           setMessage(t.isoSaved);
           setStep(4);
@@ -254,20 +260,19 @@ function App() {
                 </select>
                 {output === "iso" ? <>
                   <p>{t.isoHelp}</p>
-                  <label>{t.baseDigest}<input required pattern="[0-9a-fA-F]{64}" value={baseSha256}
-                    onChange={event => setBaseSha256(event.target.value)} /></label>
                 </> : output === "usb" ? <>
                   <h3 className="usb-heading">{t.usbDisk}</h3>
                   <div className="usb-target-list" role="radiogroup" aria-label={t.usbDisk}>
                     {usbDisks.length === 0 && <p>{t.usbNoDisk}</p>}
-                    {usbDisks.map(disk => <label key={disk.uniqueId}
-                      className={`choice-card usb-card${usbDiskId === disk.uniqueId ? " selected" : ""}`}>
+                    {usbDisks.map(disk => <label key={usbKey(disk)}
+                      className={`choice-card usb-card${usbDiskId === usbKey(disk) ? " selected" : ""}`}>
                       <ChoiceIcon kind="usb" />
                       <span className="choice-copy"><strong>{disk.friendlyName}</strong>
-                        <small>{t.diskNumber} {disk.diskNumber} · {Math.round(disk.sizeBytes / 1_000_000_000)} GB</small></span>
+                        <small>{t.diskNumber} {disk.diskNumber} · {Math.round(disk.sizeBytes / 1_000_000_000)} GB · {disk.eligible
+                          ? disk.prepared ? t.usbPrepared : t.usbNeedsInitialization : t.usbIssue[disk.issue ?? "noIdentity"]}</small></span>
                       <span className="drive-badge">{disk.driveLetter ?? t.noDriveLetter}</span>
-                      <input type="radio" name="usbDisk" value={disk.uniqueId} checked={usbDiskId === disk.uniqueId}
-                        onChange={() => setUsbDiskId(disk.uniqueId)} />
+                      <input type="radio" name="usbDisk" value={usbKey(disk)} disabled={!disk.eligible} checked={usbDiskId === usbKey(disk)}
+                        onChange={() => setUsbDiskId(usbKey(disk))} />
                     </label>)}
                   </div>
                   <button type="button" onClick={() => void refreshUsb()}>{t.usbRefresh}</button>
@@ -290,10 +295,10 @@ function App() {
             </div>}
             <div className="operation-progress" role="status" aria-live="polite">
               <div className="operation-progress-heading"><strong>{output === "usb"
-                ? t.usbProgress[usbProgress?.phase ?? "selectingIso"] : t.isoCreating}</strong>
-                {output === "usb" && <span>{t.usbProgressEstimate} {usbProgress?.percent ?? 0}%</span>}</div>
+                ? t.usbProgress[usbProgress?.phase ?? "checkingRelease"] : t.usbProgress[usbProgress?.phase ?? "configuringIso"]}</strong>
+                <span>{t.usbProgressEstimate} {usbProgress?.percent ?? 0}%</span></div>
               {output === "usb" ? <progress value={usbProgress?.percent ?? 0} max="100" aria-label={t.usbWriteProgress} />
-                : <progress aria-label={t.isoCreating} />}
+                : <progress value={usbProgress?.percent ?? 0} max="100" aria-label={t.isoCreating} />}
             </div>
             {output === "usb" && <ol className="operation-stages">
               {t.writeStages.map((label, index) => <li key={label} className={index < writeStage ? "done" : index === writeStage ? "active" : ""}>

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 bunbun-digital and contributors. SPDX-License-Identifier: Apache-2.0
-# Install only onto an existing CRISPAWN GPT/FAT32/NTFS removable USB.
+# Install onto a selected USB bus disk; prepare an unformatted disk only with explicit request.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$RequestPath, [switch]$Elevated, [switch]$Preflight)
 Set-StrictMode -Version Latest
@@ -9,21 +9,46 @@ $expectedKeys = @('iso','efi_dir','iso_sha256','efi_sha256','disk_number','disk_
 $actualKeys = @($request.PSObject.Properties.Name | Sort-Object) -join ','
 $baseKeys = @($expectedKeys | Sort-Object) -join ','
 $configuredKeys = @($expectedKeys + @('config_path','config_sha256') | Sort-Object) -join ','
-if ($actualKeys -cne $baseKeys -and $actualKeys -cne $configuredKeys) {
+$selectedKeys = @('disk_path','serial_number','layout_stamp','initialize')
+$selectedBaseKeys = @($expectedKeys + $selectedKeys | Sort-Object) -join ','
+$selectedConfiguredKeys = @($expectedKeys + $selectedKeys + @('config_path','config_sha256') | Sort-Object) -join ','
+if ($actualKeys -cnotin @($baseKeys,$configuredKeys,$selectedBaseKeys,$selectedConfiguredKeys)) {
     throw 'Invalid Builder USB request.'
 }
+$hasSelection = $actualKeys -cin @($selectedBaseKeys,$selectedConfiguredKeys)
+$hasConfig = $actualKeys -cin @($configuredKeys,$selectedConfiguredKeys)
+$initialize = $hasSelection -and [bool]$request.initialize
 if ($request.iso_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
-    $request.disk_number -lt 1 -or $request.disk_bytes -lt 1000000000) {
+    $request.disk_number -lt 0 -or $request.disk_bytes -lt 536870912) {
     throw 'Invalid Builder USB identity or digest.'
 }
-function Assert-Target {
+function Assert-Identity([bool]$checkLayout) {
     $disk = Get-Disk -Number ([int]$request.disk_number) -ErrorAction Stop
-    if ($disk.UniqueId -cne $request.disk_unique_id -or
+    if ([string]$disk.UniqueId -cne [string]$request.disk_unique_id -or
         $disk.Size -ne [UInt64]$request.disk_bytes -or
-        $disk.BusType -ne 'USB' -or $disk.PartitionStyle -ne 'GPT' -or
+        $disk.BusType -ne 'USB' -or
         $disk.IsBoot -or $disk.IsSystem -or $disk.IsOffline -or $disk.IsReadOnly) {
         throw 'Selected USB identity or safety state changed.'
     }
+    if ($hasSelection) {
+        if ([string]$disk.Path -cne [string]$request.disk_path -or [string]$disk.SerialNumber -cne [string]$request.serial_number) {
+            throw 'Selected USB hardware identity changed.'
+        }
+        if ($checkLayout) {
+            $layoutParts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue | Sort-Object PartitionNumber)
+            $layout = [string]$disk.PartitionStyle + '|' + (($layoutParts | ForEach-Object {
+                [string]$_.PartitionNumber + ':' + [string]$_.Offset + ':' + [string]$_.Size + ':' + [string]$_.GptType + ':' + [string]$_.MbrType
+            }) -join '|')
+            if ($layout -cne $request.layout_stamp) {
+                throw 'Selected USB partition layout changed. Refresh the USB list.'
+            }
+        }
+    }
+    return $disk
+}
+function Assert-Target {
+    $disk = Assert-Identity (!$initialize)
+    if ($disk.PartitionStyle -ne 'GPT') { throw 'USB is not GPT.' }
     $parts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction Stop)
     if ($parts.Count -ne 2 -or $parts[0].PartitionNumber -ne 1 -or
         $parts[1].PartitionNumber -ne 2 -or
@@ -83,7 +108,7 @@ function Assert-Inputs {
             throw 'Signed EFI file changed.'
         }
     }
-    if ($actualKeys -ceq $configuredKeys) {
+    if ($hasConfig) {
         $expectedConfig = Join-Path ([IO.Path]::GetFullPath([string]$request.report_dir)) 'live-config.json'
         if ([IO.Path]::GetFullPath([string]$request.config_path) -cne $expectedConfig -or
             $request.config_sha256 -cnotmatch '^[0-9a-f]{64}$') {
@@ -108,7 +133,7 @@ function Read-Sector([UInt64]$offset) {
     } finally { $stream.Dispose() }
 }
 Assert-Inputs
-$disk = Assert-Target
+$disk = if ($initialize) { Assert-Identity $true } else { Assert-Target }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if ($Preflight) { Write-Output 'USB_PREFLIGHT_OK'; return }
 if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -133,6 +158,20 @@ $null = New-Item -ItemType Directory -Path $dataMount -ErrorAction Stop
 $dataMounted = $false
 try {
     Assert-Inputs
+    if ($initialize) {
+        $disk = Assert-Identity $true
+        Report-Progress 'initializing' 21
+        if ($disk.PartitionStyle -ne 'RAW') {
+            Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+        }
+        $disk = Assert-Identity $false
+        Initialize-Disk -Number $disk.Number -PartitionStyle GPT -ErrorAction Stop
+        $null = Assert-Identity $false
+        $newEsp = New-Partition -DiskNumber $disk.Number -Size 256MB -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -ErrorAction Stop
+        $null = Format-Volume -Partition $newEsp -FileSystem FAT32 -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
+        $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -ErrorAction Stop
+        $null = Format-Volume -Partition $newData -FileSystem NTFS -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
+    }
     $disk = Assert-Target
     $esp = Get-Partition -DiskNumber $disk.Number -PartitionNumber 1
     $data = Get-Partition -DiskNumber $disk.Number -PartitionNumber 2
@@ -211,7 +250,7 @@ sleep 30
         [IO.File]::WriteAllText($destination,$cfg,[Text.Encoding]::ASCII)
         if ([IO.File]::ReadAllText($destination) -cne $cfg) { throw 'GRUB media readback mismatch.' }
     }
-    if ($actualKeys -ceq $configuredKeys) {
+    if ($hasConfig) {
         $null = Assert-Target
         $configTarget = Join-Path $mount 'perfect-backup.json'
         Copy-Item -LiteralPath $request.config_path -Destination $configTarget -Force -ErrorAction Stop
@@ -245,9 +284,9 @@ sleep 30
         data_uuid = $dataUuid
         iso_name = $isoName
         iso_sha256 = [string]$request.iso_sha256
-        config_sha256 = if ($actualKeys -ceq $configuredKeys) { [string]$request.config_sha256 } else { $null }
+        config_sha256 = if ($hasConfig) { [string]$request.config_sha256 } else { $null }
         network_profile = 'none'
-        ntfs_preserved = $true
+        ntfs_preserved = !$initialize
         data_volume_label = 'CRISPAWN'
         data_directory = 'crispawn'
         readback_verified = $true

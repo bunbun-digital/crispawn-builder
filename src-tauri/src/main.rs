@@ -3,7 +3,8 @@
 
 use crispawn_builder_core::efi;
 use crispawn_builder_core::image::Writer;
-use crispawn_builder_core::usb::{self, InternalDisk, PreparedUsbDisk};
+use crispawn_builder_core::release;
+use crispawn_builder_core::usb::{self, InternalDisk, UsbDisk};
 use crispawn_builder_core::{Completion, Language, Project, plan};
 use serde::Deserialize;
 use tauri::Emitter;
@@ -47,8 +48,8 @@ fn plan_settings(settings: Settings) -> Result<String, &'static str> {
 }
 
 #[tauri::command]
-async fn prepared_usb_disks() -> Result<Vec<PreparedUsbDisk>, String> {
-    tauri::async_runtime::spawn_blocking(usb::list_prepared)
+async fn usb_disks() -> Result<Vec<UsbDisk>, String> {
+    tauri::async_runtime::spawn_blocking(usb::list_usb)
         .await
         .map_err(|error| error.to_string())?
 }
@@ -63,7 +64,7 @@ async fn internal_disks() -> Result<Vec<InternalDisk>, String> {
 #[tauri::command]
 async fn save_usb(
     app: tauri::AppHandle,
-    disk: PreparedUsbDisk,
+    disk: UsbDisk,
     settings: Settings,
     pc_mode: String,
     selected_disk_numbers: Vec<u32>,
@@ -87,29 +88,41 @@ async fn save_usb(
             "other" => {}
             _ => return Err("Invalid PC selection".into()),
         }
-        let Some(iso) = app.dialog().file().add_filter("Debian LiveOS ISO", &["iso"]).blocking_pick_file() else {
-            return Ok(false);
-        };
-        let iso = iso.into_path().map_err(|error| error.to_string())?;
+        usb_progress(&app, "checkingRelease", 0);
+        let latest = release::latest_iso(|percent| usb_progress(&app, "downloadingIso", 2 + (u16::from(percent) * 8 / 100) as u8))?;
+        eprintln!("Using CRISPAWN release {} ({})", latest.tag, if latest.downloaded { "downloaded" } else { "cached" });
         let staging = tempfile::tempdir().map_err(|error| error.to_string())?;
-        usb_progress(&app, "checkingIso", 1);
-        let size = std::fs::metadata(&iso).map_err(|error| error.to_string())?.len();
+        usb_progress(&app, "checkingIso", 11);
+        let size = std::fs::metadata(&latest.path).map_err(|error| error.to_string())?.len();
         if size == 0 || size >= 100_000_000 {
-            return Err("The selected ISO must be smaller than 100 MB.".into());
+            return Err("The release ISO must be smaller than 100 MB.".into());
         }
         let staged_iso = staging.path().join("base.iso");
-        std::fs::copy(&iso, &staged_iso).map_err(|error| error.to_string())?;
+        std::fs::copy(&latest.path, &staged_iso).map_err(|error| error.to_string())?;
+        if !Writer::base_digest(&staged_iso)?.eq_ignore_ascii_case(&latest.sha256) {
+            return Err("Cached ISO changed while preparing the USB".into());
+        }
         let efi_dir = staging.path().join("efi");
-        let expected = efi::extract_for_iso(&staged_iso, &efi_dir, |percent| {
-            usb_progress(&app, "extractingEfi", percent);
+        let expected = efi::extract_for_github_iso(&staged_iso, &efi_dir, |percent| {
+            usb_progress(&app, "extractingEfi", 12 + percent / 4);
         })?;
         usb_progress(&app, "awaitingConfirmation", 16);
         let text = if ui_language == "ja" {
-            format!("{}（{} GB、ディスク {}）にISOを書き込みます。\n\nESPの起動ファイルを更新します。NTFSのバックアップ領域は維持します。続行しますか？",
+            if disk.prepared {
+                format!("{}（{} GB、ディスク {}）にISOを書き込みます。\n\nESPの起動ファイルを更新します。NTFSのバックアップ領域は維持します。続行しますか？",
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
+            } else {
+                format!("{}（{} GB、ディスク {}）を初期化してISOを書き込みます。\n\nこのUSBディスクの全パーティションとデータを削除し、起動領域とNTFS保存領域を新しく作ります。復元できません。続行しますか？",
+                    disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
+            }
         } else {
-            format!("Install the ISO on {} ({} GB, disk {})?\n\nBoot files on the ESP will be updated. The NTFS backup area is preserved.",
+            if disk.prepared {
+                format!("Install the ISO on {} ({} GB, disk {})?\n\nBoot files on the ESP will be updated. The NTFS backup area is preserved.",
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
+            } else {
+                format!("Initialize {} ({} GB, disk {}) and install the ISO?\n\nAll partitions and data on this USB disk will be erased. A new boot partition and NTFS data partition will be created. This cannot be undone.",
+                    disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
+            }
         };
         if !app.dialog().message(text).title("CRISPAWN Builder")
             .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel).blocking_show() {
@@ -118,8 +131,7 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_prepared_with_settings(&staged_iso, &efi_dir, &expected, disk.disk_number,
-            &disk.unique_id, disk.size_bytes, &report, false, Some(&project), |progress| {
+        usb::install_selected_with_settings(&staged_iso, &efi_dir, &expected, &disk, &report, &project, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
         Ok(true)
@@ -137,23 +149,11 @@ fn usb_progress(app: &tauri::AppHandle, phase: &str, percent: u8) {
 }
 
 #[tauri::command]
-async fn save_iso(
-    app: tauri::AppHandle,
-    settings: Settings,
-    base_sha256: String,
-) -> Result<bool, String> {
+async fn save_iso(app: tauri::AppHandle, settings: Settings) -> Result<bool, String> {
     let writer = Writer::new();
     let project = settings.project();
     plan(&project)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(source) = app
-            .dialog()
-            .file()
-            .add_filter("Base ISO", &["iso"])
-            .blocking_pick_file()
-        else {
-            return Ok(false);
-        };
         let Some(output) = app
             .dialog()
             .file()
@@ -163,9 +163,27 @@ async fn save_iso(
         else {
             return Ok(false);
         };
-        let source = source.into_path().map_err(|error| error.to_string())?;
         let output = output.into_path().map_err(|error| error.to_string())?;
-        writer.configure(&project, &source, &output, &base_sha256)?;
+        usb_progress(&app, "checkingRelease", 0);
+        let latest = release::latest_iso(|percent| {
+            usb_progress(
+                &app,
+                "downloadingIso",
+                2 + (u16::from(percent) * 13 / 100) as u8,
+            )
+        })?;
+        eprintln!(
+            "Using CRISPAWN release {} ({})",
+            latest.tag,
+            if latest.downloaded {
+                "downloaded"
+            } else {
+                "cached"
+            }
+        );
+        usb_progress(&app, "configuringIso", 20);
+        writer.configure(&project, &latest.path, &output, &latest.sha256)?;
+        usb_progress(&app, "complete", 100);
         Ok(true)
     })
     .await
@@ -177,7 +195,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             plan_settings,
-            prepared_usb_disks,
+            usb_disks,
             internal_disks,
             save_usb,
             save_iso

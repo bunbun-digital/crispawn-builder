@@ -5,6 +5,7 @@ pub mod efi;
 mod fat12;
 pub mod image;
 mod iso9660;
+pub mod release;
 pub mod runtime;
 pub mod usb;
 
