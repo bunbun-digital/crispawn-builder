@@ -33,16 +33,49 @@ $script:mockDisk = [pscustomobject]@{
     Size = [UInt64]64000000000; BusType = 'USB'; PartitionStyle = 'RAW'
     IsBoot = $false; IsSystem = $false; IsOffline = $false; IsReadOnly = $false
 }
+$script:mockParts = @()
+$script:calls = [System.Collections.Generic.List[string]]::new()
 function Get-Disk { [CmdletBinding()] param([int]$Number) return $script:mockDisk }
 function Get-Partition { [CmdletBinding()] param([int]$DiskNumber) return $script:mockParts }
 function Get-Volume { [CmdletBinding()] param($Partition) return [pscustomobject]@{ FileSystem = 'NTFS'; FileSystemLabel = 'CRISPAWN' } }
-function Clear-Disk { throw 'A physical disk command was reached in preflight.' }
-function Initialize-Disk { throw 'A physical disk command was reached in preflight.' }
-function New-Partition { throw 'A physical disk command was reached in preflight.' }
-function Format-Volume { throw 'A physical disk command was reached in preflight.' }
+function Clear-Disk {
+    [CmdletBinding(SupportsShouldProcess=$true)] param([int]$Number,[switch]$RemoveData,[switch]$RemoveOEM)
+    $script:calls.Add('clear')
+    $script:mockParts = @()
+}
+function Initialize-Disk {
+    [CmdletBinding()] param([int]$Number,[string]$PartitionStyle)
+    if ($script:mockDisk.PartitionStyle -ne 'RAW') { throw 'Mock disk is already initialized.' }
+    $script:calls.Add('initialize')
+    $script:mockDisk.PartitionStyle = $PartitionStyle
+}
+function Set-Disk {
+    [CmdletBinding()] param([int]$Number,[string]$PartitionStyle)
+    if ($script:mockDisk.PartitionStyle -ne 'MBR' -or $script:mockParts.Count -ne 0) { throw 'Mock disk cannot be converted.' }
+    $script:calls.Add('convert')
+    $script:mockDisk.PartitionStyle = $PartitionStyle
+}
+function New-Partition {
+    [CmdletBinding()] param([int]$DiskNumber,[UInt64]$Size,[switch]$UseMaximumSize,[string]$GptType)
+    $script:calls.Add('partition')
+    $number = $script:mockParts.Count + 1
+    $part = [pscustomobject]@{
+        PartitionNumber = $number
+        Offset = if ($number -eq 1) { [UInt64]1048576 } else { [UInt64]269484032 }
+        Size = if ($number -eq 1) { $Size } else { [UInt64]63000000000 }
+        GptType = $GptType; MbrType = ''
+    }
+    $script:mockParts = @($script:mockParts) + @($part)
+    return $part
+}
+function Format-Volume {
+    [CmdletBinding(SupportsShouldProcess=$true)] param($Partition,[string]$FileSystem,[string]$NewFileSystemLabel)
+    $script:calls.Add('format')
+}
 $helper = Join-Path $PSScriptRoot '..\crates\builder-core\src\usb_writer.ps1'
 $result = . $helper -RequestPath $requestPath -Preflight
 if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Raw USB preflight failed.' }
+if ($script:calls.Count -ne 0) { throw 'Raw preflight mutated a disk.' }
 $script:mockDisk.PartitionStyle = 'GPT'
 $esp = [pscustomobject]@{
     PartitionNumber = 1; Offset = [UInt64]1048576; Size = [UInt64]268435456
@@ -53,6 +86,45 @@ $request.layout_stamp = 'GPT|1:1048576:268435456:{c12a7328-f81f-11d2-ba4b-00a0c9
 $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
 $result = . $helper -RequestPath $requestPath -Preflight
 if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Partially initialized USB preflight failed.' }
+if ($script:calls.Count -ne 0) { throw 'GPT preflight mutated a disk.' }
+Initialize-SelectedUsb
+if ($script:calls.Contains('initialize') -or $script:calls.Contains('convert') -or !$script:calls.Contains('clear')) {
+    throw 'Partially initialized GPT disk used the wrong initialization path.'
+}
+$null = Assert-Target
+$script:calls.Clear()
+$script:mockParts = @()
+$request.layout_stamp = 'GPT|'
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Empty GPT USB preflight failed.' }
+Initialize-SelectedUsb
+if ($script:calls.Contains('clear') -or $script:calls.Contains('initialize') -or $script:calls.Contains('convert')) {
+    throw 'Empty GPT disk was unnecessarily initialized.'
+}
+$null = Assert-Target
+$script:calls.Clear()
+$script:mockParts = @()
+$script:mockDisk.PartitionStyle = 'RAW'
+$request.layout_stamp = 'RAW|'
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Raw USB second preflight failed.' }
+Initialize-SelectedUsb
+if (!$script:calls.Contains('initialize') -or $script:calls.Contains('clear')) { throw 'RAW disk initialization path failed.' }
+$null = Assert-Target
+$script:calls.Clear()
+$script:mockParts = @()
+$script:mockDisk.PartitionStyle = 'MBR'
+$request.layout_stamp = 'MBR|'
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'MBR USB preflight failed.' }
+Initialize-SelectedUsb
+if (!$script:calls.Contains('convert') -or $script:calls.Contains('initialize')) { throw 'MBR conversion path failed.' }
+$null = Assert-Target
+$script:calls.Clear()
+$script:mockDisk.PartitionStyle = 'GPT'
 $data = [pscustomobject]@{
     PartitionNumber = 2; Offset = [UInt64]269484032; Size = [UInt64]63000000000
     GptType = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'; MbrType = ''

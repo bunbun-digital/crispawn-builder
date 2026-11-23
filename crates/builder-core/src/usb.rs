@@ -396,7 +396,12 @@ fn install_with_settings(
         }
     }
     if !status.success() {
-        return Err(format!("USB writer exited with {status}"));
+        let details = fs::read_to_string(report_dir.join("failure.txt"))
+            .ok()
+            .map(|message| message.trim().to_owned())
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| format!("USB writer exited with {status}"));
+        return Err(format!("{details}\nReport: {}", report_dir.display()));
     }
     if preflight {
         println!("USB preflight passed: {}", report_dir.display());

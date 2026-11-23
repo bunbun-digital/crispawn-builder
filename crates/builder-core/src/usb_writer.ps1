@@ -4,6 +4,7 @@
 param([Parameter(Mandatory)][string]$RequestPath, [switch]$Elevated, [switch]$Preflight)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+try {
 $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json
 $expectedKeys = @('iso','efi_dir','iso_sha256','efi_sha256','disk_number','disk_unique_id','disk_bytes','report_dir')
 $actualKeys = @($request.PSObject.Properties.Name | Sort-Object) -join ','
@@ -62,6 +63,29 @@ function Assert-Target {
         throw 'USB filesystem or label changed.'
     }
     return $disk
+}
+function Initialize-SelectedUsb {
+    $disk = Assert-Identity $true
+    Report-Progress 'initializing' 21
+    $parts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue)
+    if ($parts.Count -gt 0) {
+        Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+    }
+    $disk = Assert-Identity $false
+    $remaining = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue)
+    if ($remaining.Count -ne 0) { throw 'USB still has partitions after clearing.' }
+    switch ([string]$disk.PartitionStyle) {
+        'RAW' { Initialize-Disk -Number $disk.Number -PartitionStyle GPT -ErrorAction Stop }
+        'MBR' { Set-Disk -Number $disk.Number -PartitionStyle GPT -ErrorAction Stop }
+        'GPT' { }
+        default { throw 'Unsupported USB partition style.' }
+    }
+    $disk = Assert-Identity $false
+    if ($disk.PartitionStyle -ne 'GPT') { throw 'USB could not be converted to GPT.' }
+    $newEsp = New-Partition -DiskNumber $disk.Number -Size 256MB -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -ErrorAction Stop
+    $null = Format-Volume -Partition $newEsp -FileSystem FAT32 -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
+    $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -ErrorAction Stop
+    $null = Format-Volume -Partition $newData -FileSystem NTFS -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
 }
 function FileHash([string]$path) {
     $stream = [IO.File]::Open($path, 'Open', 'Read', 'Read')
@@ -159,18 +183,7 @@ $dataMounted = $false
 try {
     Assert-Inputs
     if ($initialize) {
-        $disk = Assert-Identity $true
-        Report-Progress 'initializing' 21
-        if ($disk.PartitionStyle -ne 'RAW') {
-            Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
-        }
-        $disk = Assert-Identity $false
-        Initialize-Disk -Number $disk.Number -PartitionStyle GPT -ErrorAction Stop
-        $null = Assert-Identity $false
-        $newEsp = New-Partition -DiskNumber $disk.Number -Size 256MB -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -ErrorAction Stop
-        $null = Format-Volume -Partition $newEsp -FileSystem FAT32 -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
-        $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -ErrorAction Stop
-        $null = Format-Volume -Partition $newData -FileSystem NTFS -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
+        Initialize-SelectedUsb
     }
     $disk = Assert-Target
     $esp = Get-Partition -DiskNumber $disk.Number -PartitionNumber 1
@@ -295,7 +308,8 @@ sleep 30
     }
     Report-Progress 'verifyingFinal' 99
 } catch {
-    $_.Exception.Message | Set-Content -LiteralPath (Join-Path $reportDir 'failure.txt') -Encoding UTF8
+    [IO.File]::WriteAllText((Join-Path $reportDir 'failure.txt'),
+        $_.Exception.Message, [Text.UTF8Encoding]::new($false))
     throw
 } finally {
     try {
@@ -307,4 +321,14 @@ sleep 30
             Remove-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 1 -AccessPath $mount
         }
     }
+}
+} catch {
+    $failure = $_.Exception.Message
+    try {
+        $failurePath = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($RequestPath))) 'failure.txt'
+        if (!(Test-Path -LiteralPath $failurePath)) {
+            [IO.File]::WriteAllText($failurePath, $failure, [Text.UTF8Encoding]::new($false))
+        }
+    } catch { }
+    throw
 }
