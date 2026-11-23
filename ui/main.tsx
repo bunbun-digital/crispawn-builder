@@ -43,6 +43,7 @@ function App() {
   const [output, setOutput] = useState("usb");
   const [usbDisks, setUsbDisks] = useState<UsbDisk[]>([]);
   const [usbDiskId, setUsbDiskId] = useState("");
+  const [reinitializeUsb, setReinitializeUsb] = useState(false);
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
   const t = strings[locale];
   const selectedUsb = usbDisks.find(disk => usbKey(disk) === usbDiskId);
@@ -122,7 +123,7 @@ function App() {
           setUsbProgress(event.payload);
           setStep(3);
         });
-        if (await invoke<boolean>("save_usb", { disk, settings, pcMode,
+        if (await invoke<boolean>("save_usb", { disk, reinitializeUsb, settings, pcMode,
           selectedDiskNumbers, uiLanguage: locale })) {
           setUsbProgress({ phase: "complete", percent: 100 });
           setMessage(t.usbSaved);
@@ -272,9 +273,13 @@ function App() {
                           ? disk.prepared ? t.usbPrepared : t.usbNeedsInitialization : t.usbIssue[disk.issue ?? "noIdentity"]}</small></span>
                       <span className="drive-badge">{disk.driveLetter ?? t.noDriveLetter}</span>
                       <input type="radio" name="usbDisk" value={usbKey(disk)} disabled={!disk.eligible} checked={usbDiskId === usbKey(disk)}
-                        onChange={() => setUsbDiskId(usbKey(disk))} />
+                        onChange={() => { setUsbDiskId(usbKey(disk)); setReinitializeUsb(false); }} />
                     </label>)}
                   </div>
+                  {selectedUsb?.prepared && <label className="usb-reinitialize-option">
+                    <input type="checkbox" checked={reinitializeUsb} onChange={event => setReinitializeUsb(event.target.checked)} />
+                    <span><strong>{t.usbReinitialize}</strong><small>{t.usbReinitializeWarning}</small></span>
+                  </label>}
                   <button type="button" onClick={() => void refreshUsb()}>{t.usbRefresh}</button>
                 </> : null}
               </section>

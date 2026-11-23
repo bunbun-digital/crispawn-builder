@@ -34,10 +34,22 @@ $script:mockDisk = [pscustomobject]@{
     IsBoot = $false; IsSystem = $false; IsOffline = $false; IsReadOnly = $false
 }
 $script:mockParts = @()
+$script:mockDirty = $false
 $script:calls = [System.Collections.Generic.List[string]]::new()
 function Get-Disk { [CmdletBinding()] param([int]$Number) return $script:mockDisk }
-function Get-Partition { [CmdletBinding()] param([int]$DiskNumber) return $script:mockParts }
-function Get-Volume { [CmdletBinding()] param($Partition) return [pscustomobject]@{ FileSystem = 'NTFS'; FileSystemLabel = 'CRISPAWN' } }
+function Get-Partition {
+    [CmdletBinding()] param([int]$DiskNumber,[int]$PartitionNumber)
+    if ($PSBoundParameters.ContainsKey('PartitionNumber')) {
+        return $script:mockParts | Where-Object PartitionNumber -eq $PartitionNumber
+    }
+    return $script:mockParts
+}
+function Get-Volume { [CmdletBinding()] param($Partition) return [pscustomobject]@{
+    FileSystem = 'NTFS'; FileSystemLabel = 'CRISPAWN'; Path = '\\?\Volume{test-usb}\'
+} }
+function Get-CimInstance { [CmdletBinding()] param([string]$ClassName) return [pscustomobject]@{
+    DeviceID = '\\?\Volume{test-usb}\'; DirtyBitSet = $script:mockDirty
+} }
 function Clear-Disk {
     [CmdletBinding(SupportsShouldProcess=$true)] param([int]$Number,[switch]$RemoveData,[switch]$RemoveOEM)
     $script:calls.Add('clear')
@@ -135,6 +147,23 @@ $request.layout_stamp = 'GPT|1:1048576:268435456:{c12a7328-f81f-11d2-ba4b-00a0c9
 $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
 $result = . $helper -RequestPath $requestPath -Preflight
 if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Prepared USB preflight failed.' }
+if (Get-DataVolumeDirty) { throw 'Clean USB was reported dirty.' }
+$script:mockDirty = $true
+if (!(Get-DataVolumeDirty)) { throw 'Dirty USB was reported clean.' }
+$script:mockDirty = $null
+try {
+    $null = Get-DataVolumeDirty
+    throw 'Unknown NTFS dirty state was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Unknown NTFS dirty state was accepted.') { throw }
+}
+$script:mockDirty = $false
+$request.initialize = $true
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Prepared USB reinitialization preflight failed.' }
+$request.initialize = $false
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
 $script:mockDisk.SerialNumber = 'CHANGED'
 try {
     $null = . $helper -RequestPath $requestPath -Preflight

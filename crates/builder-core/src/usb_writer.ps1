@@ -64,6 +64,29 @@ function Assert-Target {
     }
     return $disk
 }
+function Get-DataVolumeDirty {
+    $disk = Assert-Target
+    $partition = Get-Partition -DiskNumber $disk.Number -PartitionNumber 2 -ErrorAction Stop
+    $volume = Get-Volume -Partition $partition -ErrorAction Stop
+    if ($volume.FileSystem -ne 'NTFS' -or !$volume.Path) {
+        throw 'USB_NTFS_STATE_UNKNOWN: The data volume could not be identified.'
+    }
+    $volumePath = ([string]$volume.Path).TrimEnd('\')
+    $matches = @(Get-CimInstance -ClassName Win32_Volume -ErrorAction Stop | Where-Object {
+        ([string]$_.DeviceID).TrimEnd('\') -ieq $volumePath
+    })
+    if ($matches.Count -ne 1 -or $null -eq $matches[0].DirtyBitSet) {
+        throw 'USB_NTFS_STATE_UNKNOWN: Windows did not report the data volume dirty state.'
+    }
+    return [bool]$matches[0].DirtyBitSet
+}
+function Wait-DataVolumeClean {
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        if (!(Get-DataVolumeDirty)) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
 function Initialize-SelectedUsb {
     $disk = Assert-Identity $true
     Report-Progress 'initializing' 21
@@ -208,6 +231,9 @@ if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 $reportDir = [IO.Path]::GetFullPath([string]$request.report_dir)
 if (!(Test-Path -LiteralPath $reportDir -PathType Container)) { throw 'Report directory changed.' }
+if (!$initialize -and (Get-DataVolumeDirty)) {
+    throw 'USB_NTFS_DIRTY: The existing backup volume needs repair or explicit reinitialization before writing.'
+}
 Report-Progress 'preparing' 20
 $resultPath = Join-Path $reportDir 'result.json'
 if (Test-Path -LiteralPath $resultPath) { throw 'USB result already exists.' }
@@ -326,7 +352,7 @@ sleep 30
         !(Test-Path -LiteralPath $crispawnDirectory -PathType Container)) {
         throw 'CRISPAWN data volume rename could not be verified.'
     }
-    [ordered]@{
+    $finalResult = [ordered]@{
         schema_version = 1
         disk_number = [int]$request.disk_number
         disk_unique_id = [string]$request.disk_unique_id
@@ -341,10 +367,8 @@ sleep 30
         data_volume_label = 'CRISPAWN'
         data_directory = 'crispawn'
         readback_verified = $true
-    } | ConvertTo-Json -Depth 4 | ForEach-Object {
-        [IO.File]::WriteAllText($resultPath, $_, [Text.UTF8Encoding]::new($false))
+        ntfs_dirty_verified = $true
     }
-    Report-Progress 'verifyingFinal' 99
 } catch {
     [IO.File]::WriteAllText((Join-Path $reportDir 'failure.txt'),
         $_.Exception.Message, [Text.UTF8Encoding]::new($false))
@@ -360,6 +384,21 @@ sleep 30
         }
     }
 }
+if (!(Wait-DataVolumeClean)) {
+    if (!$initialize) {
+        throw 'USB_NTFS_DIRTY: The backup volume became dirty during writing. Repair it in Windows before use.'
+    }
+    # Only a newly formatted, empty data volume may be repaired automatically.
+    $null = Assert-Target
+    $newData = Get-Partition -DiskNumber $request.disk_number -PartitionNumber 2 -ErrorAction Stop
+    $newVolume = Get-Volume -Partition $newData -ErrorAction Stop
+    $null = Repair-Volume -InputObject $newVolume -OfflineScanAndFix -ErrorAction Stop
+    if (!(Wait-DataVolumeClean)) {
+        throw 'USB_NTFS_DIRTY: Newly formatted data volume is still dirty after repair.'
+    }
+}
+[IO.File]::WriteAllText($resultPath, ($finalResult | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
+Report-Progress 'verifyingFinal' 99
 } catch {
     $failure = $_.Exception.Message
     try {

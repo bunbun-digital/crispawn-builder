@@ -220,6 +220,7 @@ pub fn install_prepared_with_settings(
         preflight,
         settings,
         None,
+        false,
         on_progress,
     )
 }
@@ -238,6 +239,7 @@ pub fn install_selected_with_settings(
         efi_dir,
         expected_iso,
         disk,
+        false,
         report_dir,
         Some(settings),
         on_progress,
@@ -250,6 +252,7 @@ pub fn install_selected(
     efi_dir: &Path,
     expected_iso: &str,
     disk: &UsbDisk,
+    reinitialize: bool,
     report_dir: &Path,
     on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
@@ -258,6 +261,7 @@ pub fn install_selected(
         efi_dir,
         expected_iso,
         disk,
+        reinitialize,
         report_dir,
         None,
         on_progress,
@@ -269,6 +273,7 @@ fn install_selected_inner(
     efi_dir: &Path,
     expected_iso: &str,
     disk: &UsbDisk,
+    reinitialize: bool,
     report_dir: &Path,
     settings: Option<&Project>,
     on_progress: impl FnMut(UsbProgress),
@@ -303,6 +308,7 @@ fn install_selected_inner(
         false,
         settings,
         Some(disk),
+        reinitialize,
         on_progress,
     )
 }
@@ -318,6 +324,7 @@ fn install_with_settings(
     preflight: bool,
     settings: Option<&Project>,
     selected: Option<&UsbDisk>,
+    reinitialize: bool,
     mut on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
     if !cfg!(windows) {
@@ -383,7 +390,7 @@ fn install_with_settings(
         request["disk_path"] = json!(disk.disk_path);
         request["serial_number"] = json!(disk.serial_number);
         request["layout_stamp"] = json!(disk.layout_stamp);
-        request["initialize"] = json!(!disk.prepared);
+        request["initialize"] = json!(!disk.prepared || reinitialize);
     }
     if let Some(project) = settings {
         let config = plan(project).map_err(str::to_owned)?;
@@ -455,6 +462,7 @@ fn install_with_settings(
         || value["data_volume_label"] != "CRISPAWN"
         || value["data_directory"] != "crispawn"
         || value["readback_verified"] != true
+        || value["ntfs_dirty_verified"] != true
         || (settings.is_some() && value["config_sha256"] != request["config_sha256"])
     {
         return Err("USB result verification failed".into());

@@ -65,6 +65,7 @@ async fn internal_disks() -> Result<Vec<InternalDisk>, String> {
 async fn save_usb(
     app: tauri::AppHandle,
     disk: UsbDisk,
+    reinitialize_usb: bool,
     settings: Settings,
     pc_mode: String,
     selected_disk_numbers: Vec<u32>,
@@ -111,7 +112,7 @@ async fn save_usb(
         })?;
         usb_progress(&app, "awaitingConfirmation", 16);
         let text = if ui_language == "ja" {
-            if disk.prepared {
+            if disk.prepared && !reinitialize_usb {
                 format!("{}（{} GB、ディスク {}）にISOを書き込みます。\n\nESPの起動ファイルを更新します。NTFSのバックアップ領域は維持します。続行しますか？",
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
             } else {
@@ -119,7 +120,7 @@ async fn save_usb(
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
             }
         } else {
-            if disk.prepared {
+            if disk.prepared && !reinitialize_usb {
                 format!("Install the ISO on {} ({} GB, disk {})?\n\nBoot files on the ESP will be updated. The NTFS backup area is preserved.",
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
             } else {
@@ -134,7 +135,7 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, &report, |progress| {
+        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
         Ok(true)
