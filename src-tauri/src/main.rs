@@ -193,6 +193,11 @@ async fn save_iso(app: tauri::AppHandle, settings: Settings) -> Result<bool, Str
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+fn exit_builder(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -201,7 +206,8 @@ fn main() {
             usb_disks,
             internal_disks,
             save_usb,
-            save_iso
+            save_iso,
+            exit_builder
         ])
         .run(tauri::generate_context!())
         .expect("could not launch CRISPAWN Builder");

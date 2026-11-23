@@ -25,7 +25,7 @@ export const strings = {
     isoCreating: "ISOを作成・照合中", isoCreatingNote: "作成が完了するまで、このウィンドウを閉じないでください。",
     writeStages: ["入力とUSBを確認", "ISOと起動ファイルを書き込み", "媒体を読み戻して照合"],
     operationFailed: "処理を完了できませんでした", operationInProgress: "処理中です。完了までお待ちください。",
-    backToReview: "確認画面に戻る", createAnother: "新しく作成する",
+    backToReview: "確認画面に戻る", exit: "終了",
     usbCompleteTitle: "起動用USBが完成しました", isoCompleteTitle: "ISOファイルが完成しました",
     usbProgress: {
       checkingRelease: "GitHubの最新リリースを確認中", downloadingIso: "GitHubからISOを取得中（保存済みなら再利用）", configuringIso: "ISOに設定を組み込み中",
@@ -65,7 +65,7 @@ export const strings = {
     isoCreating: "Creating and verifying ISO", isoCreatingNote: "Keep this window open until the operation finishes.",
     writeStages: ["Check inputs and USB", "Write ISO and boot files", "Read back and verify media"],
     operationFailed: "The operation did not complete", operationInProgress: "Working. Please wait for completion.",
-    backToReview: "Back to review", createAnother: "Create another",
+    backToReview: "Back to review", exit: "Exit",
     usbCompleteTitle: "Bootable USB is ready", isoCompleteTitle: "ISO file is ready",
     usbProgress: {
       checkingRelease: "Checking the newest GitHub release", downloadingIso: "Getting ISO from GitHub (or reusing cached copy)", configuringIso: "Adding settings to ISO",

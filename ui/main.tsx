@@ -314,6 +314,7 @@ function App() {
             </svg></div>
             <h2>{output === "usb" ? t.usbCompleteTitle : t.isoCompleteTitle}</h2>
             <p className="completion-message" role="status">{message}</p>
+            {error && <p className="error" role="alert">{error}</p>}
             <div className="completion-details"><Summary />
               {output === "usb" && selectedUsb && <div className="completion-target"><ChoiceIcon kind="usb" />
                 <span><strong>{selectedUsb.friendlyName}</strong>
@@ -334,7 +335,9 @@ function App() {
         </>}
         {step === 3 && (pending ? <span className="footer-status">{t.operationInProgress}</span>
           : <button type="button" onClick={() => go(2)}>{t.backToReview}</button>)}
-        {step === 4 && <button type="button" className="primary" onClick={() => go(0)}>{t.createAnother}</button>}
+        {step === 4 && <button type="button" className="primary" onClick={() => {
+          void invoke("exit_builder").catch(failure => setError(String(failure)));
+        }}>{t.exit}</button>}
       </footer>
     </form>
   </>;
