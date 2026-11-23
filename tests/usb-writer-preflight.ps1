@@ -142,4 +142,25 @@ try {
 } catch {
     if ($_.Exception.Message -eq 'Changed USB identity was accepted.') { throw }
 }
+$script:mockDisk.SerialNumber = 'USB-SERIAL'
+$mount = Join-Path $root 'esp'
+$null = New-Item -ItemType Directory -Path $mount
+$legacyIso = Join-Path $mount ('crispawn-' + $hash.Substring(0,12) + '.iso')
+Copy-Item -LiteralPath $iso -Destination $legacyIso
+[IO.File]::WriteAllBytes((Join-Path $mount 'perfect-backup.iso'), [byte[]](9,8,7))
+if ((Install-BootIso $mount) -cne 'crispawn.iso' -or
+    (FileHash (Join-Path $mount 'crispawn.iso')) -cne $hash -or
+    (Test-Path -LiteralPath $legacyIso) -or
+    (Test-Path -LiteralPath (Join-Path $mount 'perfect-backup.iso')) -or
+    (Test-Path -LiteralPath (Join-Path $mount 'crispawn-install-pending.iso'))) {
+    throw 'Boot ISO replacement did not match the LiveOS path.'
+}
+$updatedIso = Join-Path $root 'updated.iso'
+[IO.File]::WriteAllBytes($updatedIso, [byte[]](4,5,6,7))
+$request.iso = $updatedIso
+$request.iso_sha256 = (Get-FileHash -LiteralPath $updatedIso -Algorithm SHA256).Hash.ToLowerInvariant()
+$null = Install-BootIso $mount
+if ((FileHash (Join-Path $mount 'crispawn.iso')) -cne $request.iso_sha256) {
+    throw 'Boot ISO update did not replace the previous version.'
+}
 Write-Output 'USB writer preflight mock passed.'

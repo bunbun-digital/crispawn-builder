@@ -233,6 +233,46 @@ pub fn install_selected_with_settings(
     settings: &Project,
     on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
+    install_selected_inner(
+        iso,
+        efi_dir,
+        expected_iso,
+        disk,
+        report_dir,
+        Some(settings),
+        on_progress,
+    )
+}
+
+/// Install an ISO whose runtime settings are already embedded in its initramfs.
+pub fn install_selected(
+    iso: &Path,
+    efi_dir: &Path,
+    expected_iso: &str,
+    disk: &UsbDisk,
+    report_dir: &Path,
+    on_progress: impl FnMut(UsbProgress),
+) -> Result<(), String> {
+    install_selected_inner(
+        iso,
+        efi_dir,
+        expected_iso,
+        disk,
+        report_dir,
+        None,
+        on_progress,
+    )
+}
+
+fn install_selected_inner(
+    iso: &Path,
+    efi_dir: &Path,
+    expected_iso: &str,
+    disk: &UsbDisk,
+    report_dir: &Path,
+    settings: Option<&Project>,
+    on_progress: impl FnMut(UsbProgress),
+) -> Result<(), String> {
     if !disk.eligible
         || (disk.disk_path.is_empty() && disk.unique_id.is_empty() && disk.serial_number.is_empty())
     {
@@ -261,7 +301,7 @@ pub fn install_selected_with_settings(
         disk.size_bytes,
         report_dir,
         false,
-        Some(settings),
+        settings,
         Some(disk),
         on_progress,
     )

@@ -141,12 +141,15 @@ fn verify_data_layout(raw: &[u8]) -> Result<(), String> {
     if layout
         != json!({
             "kind": "crispawn.media_layout",
-            "schema_version": 1,
+            "schema_version": 2,
+            "boot_iso_path": "/crispawn.iso",
             "data_volume_label": "CRISPAWN",
             "data_directory": "crispawn"
         })
     {
-        return Err("The ISO does not use the CRISPAWN USB data layout.".into());
+        return Err(
+            "The CRISPAWN release ISO must declare media layout v2 with /crispawn.iso.".into(),
+        );
     }
     Ok(())
 }
@@ -187,8 +190,9 @@ mod tests {
     use super::{extract_for_iso, verify_data_layout};
 
     #[test]
-    fn usb_layout_requires_crispawn_names() {
-        assert!(verify_data_layout(br#"{"kind":"crispawn.media_layout","schema_version":1,"data_volume_label":"CRISPAWN","data_directory":"crispawn"}"#).is_ok());
+    fn usb_layout_requires_crispawn_boot_contract() {
+        assert!(verify_data_layout(br#"{"kind":"crispawn.media_layout","schema_version":2,"boot_iso_path":"/crispawn.iso","data_volume_label":"CRISPAWN","data_directory":"crispawn"}"#).is_ok());
+        assert!(verify_data_layout(br#"{"kind":"crispawn.media_layout","schema_version":1,"data_volume_label":"CRISPAWN","data_directory":"crispawn"}"#).is_err());
         assert!(verify_data_layout(br#"{"kind":"crispawn.media_layout","schema_version":1,"data_volume_label":"PERFECTBACKUP","data_directory":"perfect-backup"}"#).is_err());
     }
 

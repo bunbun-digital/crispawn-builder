@@ -97,14 +97,17 @@ async fn save_usb(
         if size == 0 || size >= 100_000_000 {
             return Err("The release ISO must be smaller than 100 MB.".into());
         }
-        let staged_iso = staging.path().join("base.iso");
-        std::fs::copy(&latest.path, &staged_iso).map_err(|error| error.to_string())?;
-        if !Writer::base_digest(&staged_iso)?.eq_ignore_ascii_case(&latest.sha256) {
+        let base_iso = staging.path().join("base.iso");
+        std::fs::copy(&latest.path, &base_iso).map_err(|error| error.to_string())?;
+        if !Writer::base_digest(&base_iso)?.eq_ignore_ascii_case(&latest.sha256) {
             return Err("Cached ISO changed while preparing the USB".into());
         }
+        usb_progress(&app, "configuringIso", 12);
+        let staged_iso = staging.path().join("configured.iso");
+        Writer::new().configure(&project, &base_iso, &staged_iso, &latest.sha256)?;
         let efi_dir = staging.path().join("efi");
         let expected = efi::extract_for_github_iso(&staged_iso, &efi_dir, |percent| {
-            usb_progress(&app, "extractingEfi", 12 + percent / 4);
+            usb_progress(&app, "extractingEfi", 13 + percent / 4);
         })?;
         usb_progress(&app, "awaitingConfirmation", 16);
         let text = if ui_language == "ja" {
@@ -131,7 +134,7 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_selected_with_settings(&staged_iso, &efi_dir, &expected, &disk, &report, &project, |progress| {
+        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, &report, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
         Ok(true)

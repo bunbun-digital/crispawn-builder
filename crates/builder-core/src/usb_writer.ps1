@@ -121,6 +121,45 @@ function Copy-IsoWithProgress([string]$sourcePath, [string]$targetPath) {
         } finally { $target.Dispose() }
     } finally { $source.Dispose() }
 }
+function Install-BootIso([string]$mount) {
+    # The LiveOS checks this exact ESP path before it starts a backup.
+    $isoName = 'crispawn.iso'
+    $isoTarget = Join-Path $mount $isoName
+    # Older Builder versions wrote hash-named ISOs that the LiveOS cannot open.
+    foreach ($oldIso in @(Get-ChildItem -LiteralPath $mount -File -Force -Filter 'crispawn-*.iso' -ErrorAction Stop)) {
+        if ($oldIso.Name -cmatch '^crispawn-[0-9a-f]{12}\.iso$') {
+            $null = Assert-Target
+            Remove-Item -LiteralPath $oldIso.FullName -Force -ErrorAction Stop
+        }
+    }
+    $currentIsoMatches = (Test-Path -LiteralPath $isoTarget) -and
+        ((FileHash $isoTarget) -ceq $request.iso_sha256)
+    if (!$currentIsoMatches) {
+        $null = Assert-Target
+        $pendingIso = Join-Path $mount 'crispawn-install-pending.iso'
+        if (Test-Path -LiteralPath $pendingIso) {
+            Remove-Item -LiteralPath $pendingIso -Force -ErrorAction Stop
+        }
+        Copy-IsoWithProgress $request.iso $pendingIso
+        if ((FileHash $pendingIso) -cne $request.iso_sha256) {
+            throw 'Staged ISO media readback mismatch.'
+        }
+        $null = Assert-Target
+        if (Test-Path -LiteralPath $isoTarget) {
+            Remove-Item -LiteralPath $isoTarget -Force -ErrorAction Stop
+        }
+        Move-Item -LiteralPath $pendingIso -Destination $isoTarget -ErrorAction Stop
+    }
+    if ((FileHash $isoTarget) -cne $request.iso_sha256) {
+        throw 'ISO media readback mismatch.'
+    }
+    $oldBootIso = Join-Path $mount 'perfect-backup.iso'
+    if (Test-Path -LiteralPath $oldBootIso) {
+        $null = Assert-Target
+        Remove-Item -LiteralPath $oldBootIso -Force -ErrorAction Stop
+    }
+    return $isoName
+}
 function Assert-Inputs {
     $iso = Get-Item -LiteralPath $request.iso -ErrorAction Stop
     if (!$iso -or $iso.Length -le 0 -or $iso.Length -ge 100000000 -or
@@ -214,14 +253,8 @@ try {
     Add-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 1 -AccessPath $mount
     $mounted = $true
     Report-Progress 'writingIso' 25
-    $isoName = 'crispawn-' + $request.iso_sha256.Substring(0,12) + '.iso'
+    $isoName = Install-BootIso $mount
     $isoTarget = Join-Path $mount $isoName
-    if (Test-Path -LiteralPath $isoTarget) {
-        if ((FileHash $isoTarget) -cne $request.iso_sha256) { throw 'Existing ISO name has different bytes.' }
-    } else {
-        $null = Assert-Target
-        Copy-IsoWithProgress $request.iso $isoTarget
-    }
     Report-Progress 'verifyingIso' 73
     if ((FileHash $isoTarget) -cne $request.iso_sha256) { throw 'ISO media readback mismatch.' }
     Report-Progress 'verifyingIso' 82
@@ -246,8 +279,6 @@ try {
     }
     Report-Progress 'writingBoot' 93
     $cfg = @"
-serial --unit=0 --speed=115200
-terminal_output serial
 echo PB_USB_GRUB_START uuid=$bootUuid iso=$isoName
 search --no-floppy --fs-uuid --set=pbroot $bootUuid
 loopback loop (`$pbroot)/$isoName
@@ -273,6 +304,13 @@ sleep 30
     }
     Report-Progress 'verifyingFinal' 95
     if ((FileHash $isoTarget) -cne $request.iso_sha256) { throw 'Final ISO readback mismatch.' }
+    if (!$hasConfig) {
+        $oldConfig = Join-Path $mount 'perfect-backup.json'
+        if (Test-Path -LiteralPath $oldConfig) {
+            $null = Assert-Target
+            Remove-Item -LiteralPath $oldConfig -Force -ErrorAction Stop
+        }
+    }
     if (Test-Path -LiteralPath $legacyDirectory) {
         $null = Assert-Target
         Move-Item -LiteralPath $legacyDirectory -Destination $crispawnDirectory -ErrorAction Stop

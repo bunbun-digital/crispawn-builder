@@ -32,6 +32,8 @@ The executable is `build/rust/debug/crispawn-builder-desktop.exe`. The interface
 
 The CLI uses the same Rust controller as the desktop application. `release-iso` checks GitHub and downloads or reuses the latest ISO. The low-level `iso BASE.iso OUTPUT.iso BASE_SHA256` command creates a configured ISO and its `.sha256` and `.json` sidecars for development fixtures. `plan` previews legacy LiveOS settings; `usb-list` enumerates all USB bus disks, including unprepared flash drives, HDDs and SSDs; `disk-list` enumerates internal disks; `efi-extract` extracts pinned signed boot files from a compatible development ISO. The low-level `usb` command requires a prepared disk's number, unique ID, and size. Use the desktop application for automatic initialization and normal USB creation.
 
+The USB writer places the configured ISO at `/crispawn.iso` on the EFI partition. The release ISO must declare this path in `/boot/crispawn-media.json` using media layout schema v2. Backup data and logs use the `crispawn` directory on the NTFS partition. Keep both sides of this boot contract synchronized when releasing a new LiveOS image.
+
 ISO configuration is implemented in Rust. It reads the ISO9660 image, updates `/boot/initrd`, reads the settings back, and checks that signed boot files and boot entries are unchanged. No external Python, xorriso, or helper executable is invoked.
 
 ## Verification
