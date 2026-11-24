@@ -45,7 +45,7 @@ function App() {
   const [usbDiskId, setUsbDiskId] = useState("");
   const [reinitializeUsb, setReinitializeUsb] = useState(false);
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
-  const [writtenIsoName, setWrittenIsoName] = useState<string | null>(null);
+  const [sourceIsoVersion, setSourceIsoVersion] = useState<string | null>(null);
   const t = strings[locale];
   const selectedUsb = usbDisks.find(disk => usbKey(disk) === usbDiskId);
   const writeStage = (usbProgress?.percent ?? 0) >= 73 ? 2 : (usbProgress?.percent ?? 0) >= 25 ? 1 : 0;
@@ -90,7 +90,7 @@ function App() {
     setMessage("");
     setError("");
     setUsbProgress(null);
-    setWrittenIsoName(null);
+    setSourceIsoVersion(null);
   }
 
   function go(next: Step) {
@@ -125,11 +125,11 @@ function App() {
           setUsbProgress(event.payload);
           setStep(3);
         });
-        const isoName = await invoke<string | null>("save_usb", { disk, reinitializeUsb, settings, pcMode,
+        const releaseVersion = await invoke<string | null>("save_usb", { disk, reinitializeUsb, settings, pcMode,
           selectedDiskNumbers, uiLanguage: locale });
-        if (isoName) {
+        if (releaseVersion) {
           setUsbProgress({ phase: "complete", percent: 100 });
-          setWrittenIsoName(isoName);
+          setSourceIsoVersion(releaseVersion);
           setMessage(t.usbSaved);
           setStep(4);
         } else {
@@ -328,8 +328,8 @@ function App() {
               {output === "usb" && selectedUsb && <div className="completion-target"><ChoiceIcon kind="usb" />
                 <span><strong>{selectedUsb.friendlyName}</strong>
                   <small>{t.diskNumber} {selectedUsb.diskNumber} · {Math.round(selectedUsb.sizeBytes / 1_000_000_000)} GB · {selectedUsb.driveLetter ?? t.noDriveLetter}</small></span></div>}
-              {output === "usb" && writtenIsoName && <div className="completion-file">
-                <span>{t.writtenIsoName}</span><strong>{writtenIsoName}</strong>
+              {output === "usb" && sourceIsoVersion && <div className="completion-release">
+                <span>{t.sourceIsoVersion}</span><strong>{sourceIsoVersion}</strong>
               </div>}
             </div>
           </section>}

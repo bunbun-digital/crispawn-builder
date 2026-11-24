@@ -255,7 +255,7 @@ pub fn install_selected(
     reinitialize: bool,
     report_dir: &Path,
     on_progress: impl FnMut(UsbProgress),
-) -> Result<String, String> {
+) -> Result<(), String> {
     install_selected_inner(
         iso,
         efi_dir,
@@ -265,15 +265,7 @@ pub fn install_selected(
         report_dir,
         None,
         on_progress,
-    )?;
-    let result: Value = serde_json::from_slice(
-        &fs::read(report_dir.join("result.json")).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())?;
-    result["iso_name"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| "USB result is missing the written ISO filename".into())
 }
 
 fn install_selected_inner(

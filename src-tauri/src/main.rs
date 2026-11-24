@@ -128,6 +128,11 @@ async fn save_usb(
                     disk.friendly_name, disk.size_bytes / 1_000_000_000, disk.disk_number)
             }
         };
+        let text = if ui_language == "ja" {
+            format!("{text}\n\n元のISOのバージョン: {}", latest.tag)
+        } else {
+            format!("{text}\n\nSource ISO release: {}", latest.tag)
+        };
         if !app.dialog().message(text).title("CRISPAWN Builder")
             .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel).blocking_show() {
             return Ok(None);
@@ -135,10 +140,10 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        let written_iso_name = usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
+        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
-        Ok(Some(written_iso_name))
+        Ok(Some(latest.tag))
     }).await.map_err(|error| error.to_string())?
 }
 
