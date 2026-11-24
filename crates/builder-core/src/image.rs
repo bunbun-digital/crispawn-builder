@@ -7,17 +7,45 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::cpio::{Archive, CAPABILITIES, CONFIG};
 use crate::iso9660::Image;
 use crate::runtime::image_settings;
-use crate::{Project, plan};
+use crate::{Project, plan, validate_project};
 
 const ISO_LIMIT: u64 = 100_000_000;
 
 pub struct Writer;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSupport {
+    pub tag: String,
+    pub config_versions: Vec<u64>,
+    pub capabilities: Vec<String>,
+}
+
+pub fn release_support(source: &Path, tag: String) -> Result<ReleaseSupport, String> {
+    let source = fs::read(source).map_err(io_error)?;
+    if !(1..ISO_LIMIT).contains(&(source.len() as u64)) {
+        return Err("Release ISO size is invalid".into());
+    }
+    let image = Image::open(source)?;
+    let archive = Archive::read_xz(image.read_file("boot/initrd")?)?;
+    let (versions, capabilities) = release_capabilities(&archive)?;
+    let mut config_versions: Vec<_> = versions.into_iter().collect();
+    config_versions.sort_unstable();
+    let mut capabilities: Vec<_> = capabilities.unwrap_or_default().into_iter().collect();
+    capabilities.sort();
+    Ok(ReleaseSupport {
+        tag,
+        config_versions,
+        capabilities,
+    })
+}
 
 impl Writer {
     /// The ISO writer is built into the executable.
@@ -42,7 +70,12 @@ impl Writer {
         output: &Path,
         expected_sha256: &str,
     ) -> Result<(), String> {
-        let legacy_config = plan(project)?.into_bytes();
+        validate_project(project)?;
+        let legacy_config = if project.requires_v2() {
+            None
+        } else {
+            Some(plan(project)?.into_bytes())
+        };
         let payload = image_settings(project)?;
         if expected_sha256.len() != 64
             || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -86,7 +119,8 @@ impl Writer {
         let boot_entries = image.boot_platforms()?;
         let signed_files = signed_file_digests(&image)?;
         let mut archive = Archive::read_xz(image.read_file("boot/initrd")?)?;
-        let settings = select_settings(&archive, &legacy_config, &payload)?;
+        let (settings, configuration_schema_version) =
+            select_settings(&archive, legacy_config.as_deref(), &payload)?;
         archive.replace_settings(&settings)?;
         let initrd = archive.to_xz()?;
         image.replace_file("boot/initrd", &initrd, ISO_LIMIT as usize)?;
@@ -109,7 +143,6 @@ impl Writer {
         let image_bytes = image.into_bytes();
         let iso_sha256 = hex::encode(Sha256::digest(&image_bytes));
         let configuration_sha256 = hex::encode(Sha256::digest(&settings));
-        let configuration_schema_version = if settings == legacy_config { 1 } else { 2 };
         let details = json!({
             "schema_version": 1,
             "kind": "perfect-backup-configuration",
@@ -154,7 +187,11 @@ fn signed_file_digests(image: &Image) -> Result<Vec<(&'static str, String)>, Str
     Ok(files)
 }
 
-fn select_settings(archive: &Archive, legacy: &[u8], payload: &Value) -> Result<Vec<u8>, String> {
+fn select_settings(
+    archive: &Archive,
+    legacy: Option<&[u8]>,
+    payload: &Value,
+) -> Result<(Vec<u8>, u64), String> {
     let runtime = payload
         .get("runtime")
         .ok_or("Runtime settings are missing")?;
@@ -171,6 +208,11 @@ fn select_settings(archive: &Archive, legacy: &[u8], payload: &Value) -> Result<
     if let Some(capabilities) = capabilities {
         let required = required_capabilities(runtime)?;
         if !required.is_subset(&capabilities) {
+            if required.contains("processing.verify_after_write")
+                && !capabilities.contains("processing.verify_after_write")
+            {
+                return Err("The selected ISO cannot skip backup readback. Use a CRISPAWN release that declares processing.verify_after_write".into());
+            }
             return Err(
                 "The selected base ISO does not declare support for the requested LiveOS settings"
                     .into(),
@@ -200,14 +242,17 @@ fn select_settings(archive: &Archive, legacy: &[u8], payload: &Value) -> Result<
                 return Err("Base runtime does not match its release declaration".into());
             }
         }
-        return Ok(legacy.to_vec());
+        return legacy.map(|bytes| (bytes.to_vec(), 1)).ok_or_else(|| {
+            "The selected base ISO cannot apply these LiveOS settings; runtime v2 is required"
+                .into()
+        });
     }
     let mut settings = serde_json::to_vec_pretty(runtime).map_err(|error| error.to_string())?;
     settings.push(b'\n');
     if settings.len() > 65_536 {
         return Err("Runtime settings exceed the size limit".into());
     }
-    Ok(settings)
+    Ok((settings, 2))
 }
 
 fn release_capabilities(
@@ -317,6 +362,12 @@ fn required_capabilities(runtime: &Value) -> Result<HashSet<String>, String> {
             .ok_or("Invalid runtime capability field")?;
         result.insert(format!("{prefix}{value}"));
     }
+    if runtime["failure"]["action"] == "stay" {
+        result.insert("failure.stay".to_owned());
+    }
+    if runtime["processing"]["verify_after_write"] == false {
+        result.insert("processing.verify_after_write".to_owned());
+    }
     Ok(result)
 }
 
@@ -410,4 +461,20 @@ fn file_digest(file: File) -> Result<String, String> {
 
 fn io_error(error: io::Error) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_runtime_features_require_release_capabilities() {
+        let mut project = Project::default();
+        project.options.verify_after_write = false;
+        project.options.failure_action = "stay".into();
+        let runtime = crate::runtime::image_settings(&project).unwrap();
+        let required = required_capabilities(&runtime["runtime"]).unwrap();
+        assert!(required.contains("processing.verify_after_write"));
+        assert!(required.contains("failure.stay"));
+    }
 }

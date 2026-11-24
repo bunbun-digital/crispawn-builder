@@ -11,11 +11,17 @@ const HELP: &str = "Usage: crispawn-builder plan [settings]\n\
     crispawn-builder iso BASE.iso OUTPUT.iso BASE_SHA256 [settings]\n\
     crispawn-builder usb-list\n\
     crispawn-builder release-iso\n\
+    crispawn-builder release-capabilities\n\
     crispawn-builder release-efi-extract OUTPUT_DIRECTORY\n\
     crispawn-builder disk-list\n\
     crispawn-builder efi-extract BASE.iso OUTPUT_DIRECTORY\n\
     crispawn-builder usb BASE.iso EFI_DIRECTORY ISO_SHA256 DISK_NUMBER DISK_UNIQUE_ID DISK_BYTES REPORT_DIR [--preflight]\n\
-    Settings: [--language ja|en] [--source-id LINUX_ID]... [--start-seconds N] [--poweroff-seconds N | --stay]";
+    Settings: [--language ja|en] [--source-id LINUX_ID]... [--start-seconds N] [--poweroff-seconds N | --stay]
+    [--backup-directory PATH] [--startup-mode auto_copy|menu|restore_select] [--ui-mode gui|console|headless]
+    [--failure-action poweroff|stay] [--log-policy always|on_error|never] [--log-sync-interval-ms N]
+    [--processing-profile balanced|long_matches|high_compression|incompressible]
+    [--verify-after-write true|false] [--no-progress-seconds N] [--failure-grace-seconds N]
+    [--shutdown-grace-seconds N] [--transient-retries N] [--retry-delay-ms N] [--probe-interval-ms N]";
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -39,6 +45,18 @@ fn run() -> Result<(), String> {
                     "cached"
                 },
                 iso.path.display()
+            );
+            return Ok(());
+        }
+        Some("release-capabilities") => {
+            if args.next().is_some() {
+                return Err(HELP.into());
+            }
+            let iso = crispawn_builder_core::release::latest_iso(|_| {})?;
+            let support = crispawn_builder_core::image::release_support(&iso.path, iso.tag)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&support).map_err(|error| error.to_string())?
             );
             return Ok(());
         }
@@ -140,6 +158,38 @@ fn run() -> Result<(), String> {
             }
             "--source-id" => project.source_ids.push(value()?),
             "--start-seconds" => project.start_seconds = seconds(&value()?, &flag)?,
+            "--backup-directory" => project.options.backup_directory = value()?,
+            "--startup-mode" => project.options.startup_mode = value()?,
+            "--ui-mode" => project.options.ui_mode = value()?,
+            "--failure-action" => project.options.failure_action = value()?,
+            "--log-policy" => project.options.log_policy = value()?,
+            "--log-sync-interval-ms" => {
+                project.options.log_sync_interval_ms = seconds(&value()?, &flag)?
+            }
+            "--processing-profile" => project.options.initial_profile = value()?,
+            "--verify-after-write" => {
+                project.options.verify_after_write = match value()?.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err("verify-after-write must be true or false".into()),
+                }
+            }
+            "--no-progress-seconds" => {
+                project.options.io_policy.no_progress_seconds = seconds(&value()?, &flag)?
+            }
+            "--failure-grace-seconds" => {
+                project.options.io_policy.failure_grace_seconds = seconds(&value()?, &flag)?
+            }
+            "--shutdown-grace-seconds" => {
+                project.options.io_policy.shutdown_grace_seconds = seconds(&value()?, &flag)?
+            }
+            "--transient-retries" => {
+                project.options.io_policy.transient_retries = seconds(&value()?, &flag)?
+            }
+            "--retry-delay-ms" => {
+                project.options.io_policy.retry_delay_ms = seconds(&value()?, &flag)?
+            }
+            "--probe-interval-ms" => project.options.probe_interval_ms = seconds(&value()?, &flag)?,
             "--stay" | "--poweroff-seconds" => {
                 if completion_selected {
                     return Err("choose one completion action".into());
@@ -162,7 +212,11 @@ fn run() -> Result<(), String> {
         println!("ISO configured and verified: {}", output.display());
         return Ok(());
     }
-    let settings = plan(&project)?;
+    let settings = if project.requires_v2() {
+        crispawn_builder_core::runtime::preview(&project)?
+    } else {
+        plan(&project)?
+    };
     io::stdout()
         .lock()
         .write_all(settings.as_bytes())

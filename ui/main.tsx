@@ -16,6 +16,14 @@ type UsbDisk = { diskNumber: number; friendlyName: string; uniqueId: string; dis
 type InternalDisk = { diskNumber: number; friendlyName: string; sizeBytes: number; busType: string };
 type UsbPhase = keyof typeof strings.ja.usbProgress;
 type UsbProgress = { phase: UsbPhase; percent: number };
+type ReleaseSupport = { tag: string; configVersions: number[]; capabilities: string[] };
+type RuntimeInput = {
+  backupDirectory: string; startupMode: string; uiMode: string; failureAction: string;
+  logPolicy: string; logSyncIntervalMs: string; initialProfile: string;
+  verifyAfterWrite: boolean; probeIntervalMs: string;
+  ioPolicy: { noProgressSeconds: string; failureGraceSeconds: string; shutdownGraceSeconds: string;
+    transientRetries: string; retryDelayMs: string };
+};
 
 function ChoiceIcon({ kind }: { kind: "disk" | "usb" }) {
   return <span className="choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
@@ -37,6 +45,12 @@ function App() {
   const [start, setStart] = useState("30");
   const [off, setOff] = useState("5");
   const [stay, setStay] = useState(false);
+  const [options, setOptions] = useState<RuntimeInput>({
+    backupDirectory: "crispawn/backups", startupMode: "auto_copy", uiMode: "gui", failureAction: "poweroff",
+    logPolicy: "always", logSyncIntervalMs: "0", initialProfile: "balanced", verifyAfterWrite: true,
+    probeIntervalMs: "250", ioPolicy: { noProgressSeconds: "180", failureGraceSeconds: "5",
+      shutdownGraceSeconds: "20", transientRetries: "3", retryDelayMs: "100" },
+  });
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -46,6 +60,9 @@ function App() {
   const [reinitializeUsb, setReinitializeUsb] = useState(false);
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
   const [sourceIsoVersion, setSourceIsoVersion] = useState<string | null>(null);
+  const [releaseSupport, setReleaseSupport] = useState<ReleaseSupport | null>(null);
+  const [releaseSupportError, setReleaseSupportError] = useState("");
+  const [releaseSupportLoading, setReleaseSupportLoading] = useState(false);
   const t = strings[locale];
   const selectedUsb = usbDisks.find(disk => usbKey(disk) === usbDiskId);
   const writeStage = (usbProgress?.percent ?? 0) >= 73 ? 2 : (usbProgress?.percent ?? 0) >= 25 ? 1 : 0;
@@ -53,6 +70,30 @@ function App() {
   const sourceSummary = pcMode === "other" ? t.all : internalDisks
     .filter(disk => selectedDiskNumbers.includes(disk.diskNumber))
     .map(disk => disk.friendlyName).join(", ") || t.noSelectedDisks;
+  function setOption<K extends keyof RuntimeInput>(key: K, value: RuntimeInput[K]) {
+    setOptions(current => ({ ...current, [key]: value }));
+  }
+  function setIoOption<K extends keyof RuntimeInput["ioPolicy"]>(key: K, value: RuntimeInput["ioPolicy"][K]) {
+    setOptions(current => ({ ...current, ioPolicy: { ...current.ioPolicy, [key]: value } }));
+  }
+  const supports = (capability: string) => !!releaseSupport?.configVersions.includes(2)
+    && releaseSupport.capabilities.includes(capability);
+
+  useEffect(() => {
+    if (step === 2 && !releaseSupport && !releaseSupportError && !releaseSupportLoading) void refreshReleaseSupport();
+  }, [step]);
+
+  async function refreshReleaseSupport() {
+    setReleaseSupportLoading(true);
+    setReleaseSupportError("");
+    try {
+      setReleaseSupport(await invoke<ReleaseSupport>("release_support"));
+    } catch (failure) {
+      setReleaseSupportError(String(failure));
+    } finally {
+      setReleaseSupportLoading(false);
+    }
+  }
 
   useEffect(() => {
     void refreshUsb();
@@ -100,6 +141,22 @@ function App() {
 
   async function submit() {
     clearResult();
+    const within = (value: string, minimum: number, maximum: number) =>
+      /^\d+$/.test(value) && Number(value) >= minimum && Number(value) <= maximum;
+    const io = options.ioPolicy;
+    if (!options.backupDirectory.trim()
+      || (options.startupMode === "auto_copy" && !within(start, 0, 300))
+      || (!stay && !within(off, 0, 60))
+      || !within(options.logSyncIntervalMs, 0, 60000)
+      || !within(options.probeIntervalMs, 100, 5000)
+      || !within(io.noProgressSeconds, 1, 3600)
+      || !within(io.failureGraceSeconds, 1, 120)
+      || !within(io.shutdownGraceSeconds, 1, 120)
+      || !within(io.transientRetries, 0, 8)
+      || !within(io.retryDelayMs, 1, 2000)) {
+      setError(t.invalidSettings);
+      return;
+    }
     if (pcMode === "local" && !selectedDiskNumbers.length) {
       setError(t.noSelectedDisks);
       return;
@@ -111,8 +168,20 @@ function App() {
     const settings = {
       sourceIds,
       language,
-      startSeconds: Number(start),
+      startSeconds: options.startupMode === "auto_copy" ? Number(start) : 0,
       poweroffSeconds: stay ? null : Number(off),
+      options: {
+        ...options,
+        logSyncIntervalMs: Number(options.logSyncIntervalMs),
+        probeIntervalMs: Number(options.probeIntervalMs),
+        ioPolicy: {
+          noProgressSeconds: Number(options.ioPolicy.noProgressSeconds),
+          failureGraceSeconds: Number(options.ioPolicy.failureGraceSeconds),
+          shutdownGraceSeconds: Number(options.ioPolicy.shutdownGraceSeconds),
+          transientRetries: Number(options.ioPolicy.transientRetries),
+          retryDelayMs: Number(options.ioPolicy.retryDelayMs),
+        },
+      },
     };
     setPending(true);
     let unlisten: (() => void) | undefined;
@@ -171,7 +240,7 @@ function App() {
         <option value="ja">日本語</option><option value="en">English</option>
       </select>
     </header>
-    <form onSubmit={event => {
+    <form noValidate onSubmit={event => {
       event.preventDefault();
       if (step === 2) {
         void submit();
@@ -228,17 +297,24 @@ function App() {
             {step === 2 && <div className="review-columns">
               <section>
                 <Summary />
+                <div className="release-support">
+                  <span>{releaseSupport ? `${t.sourceIsoVersion}: ${releaseSupport.tag}`
+                    : releaseSupportLoading ? t.checkingReleaseSupport : t.releaseSupportUnavailable}</span>
+                  <button type="button" disabled={releaseSupportLoading} onClick={() => void refreshReleaseSupport()}>{t.checkReleaseSupport}</button>
+                </div>
+                {releaseSupportError && <p className="setting-note">{releaseSupportError}</p>}
                 <h2>{t.start}</h2>
-                <select aria-label={t.start} defaultValue="auto">
-                  <option value="auto">{t.auto}</option>
-                  <option disabled>{t.menu} · {t.unavailable}</option>
-                  <option disabled>{t.restore} · {t.unavailable}</option>
+                <select aria-label={t.start} value={options.startupMode}
+                  onChange={event => setOption("startupMode", event.target.value)}>
+                  <option value="auto_copy">{t.auto}</option>
+                  <option value="menu" disabled={options.uiMode === "headless" || !supports("startup.menu")}>{t.menu}</option>
+                  <option value="restore_select" disabled={options.uiMode === "headless" || !supports("startup.restore_select")}>{t.restore}</option>
                 </select>
                 <div className="pair">
-                  <label>{t.startDelay}
+                  {options.startupMode === "auto_copy" && <label>{t.startDelay}
                     <input type="number" min="0" max="300" required value={start}
                       onChange={event => setStart(event.target.value)} />
-                  </label>
+                  </label>}
                   <label>{t.language}
                     <select value={language} onChange={event => setLanguage(event.target.value as Language)}>
                       <option value="ja">日本語</option><option value="en">English</option>
@@ -256,6 +332,80 @@ function App() {
                       onChange={event => setOff(event.target.value)} />
                   </label>}
                 </div>
+                <section className="backup-verification" aria-label={t.backupVerification}>
+                  <h2>{t.backupVerification}</h2>
+                  <label className={`choice-card verification-card${options.verifyAfterWrite ? " selected" : ""}`}>
+                    <span className="choice-icon" aria-hidden="true">✓</span>
+                    <span className="choice-copy"><strong>{t.verifyOn}</strong><small>{t.verifyOnHelp}</small></span>
+                    <input type="radio" name="backupVerification" checked={options.verifyAfterWrite}
+                      onChange={() => setOption("verifyAfterWrite", true)} />
+                  </label>
+                  <label className={`choice-card verification-card${!options.verifyAfterWrite ? " selected" : ""}`}>
+                    <span className="choice-icon" aria-hidden="true">»</span>
+                    <span className="choice-copy"><strong>{t.verifyOff}</strong><small>{t.verifyOffHelp}
+                      {!supports("processing.verify_after_write") && ` ${t.verifyUnavailable}`}</small></span>
+                    <input type="radio" name="backupVerification" checked={!options.verifyAfterWrite}
+                      disabled={!supports("processing.verify_after_write")}
+                      onChange={() => setOption("verifyAfterWrite", false)} />
+                  </label>
+                </section>
+                <details className="advanced-settings">
+                  <summary>{t.advancedSettings}</summary>
+                  <fieldset className="advanced-settings-body" disabled={!releaseSupport?.configVersions.includes(2)}>
+                    {!releaseSupport?.configVersions.includes(2) && <p className="setting-note">{t.advancedUnavailable}</p>}
+                    <label>{t.backupDirectory}<input type="text" maxLength={512} required value={options.backupDirectory}
+                      onChange={event => setOption("backupDirectory", event.target.value)} /></label>
+                    <div className="pair">
+                      <label>{t.interfaceMode}<select value={options.uiMode} onChange={event => {
+                        const mode = event.target.value;
+                        setOptions(current => ({ ...current, uiMode: mode,
+                          startupMode: mode === "headless" ? "auto_copy" : current.startupMode }));
+                        if (mode !== "gui") setStart("0");
+                      }}>
+                        <option value="gui">{t.interfaceGui}</option>
+                        <option value="console" disabled={!supports("ui.console")}>{t.interfaceConsole}</option>
+                        <option value="headless" disabled={!supports("ui.headless")}>{t.interfaceHeadless}</option>
+                      </select></label>
+                      <label>{t.failureAction}<select value={options.failureAction}
+                        onChange={event => setOption("failureAction", event.target.value)}>
+                        <option value="poweroff">{t.failurePoweroff}</option>
+                        <option value="stay" disabled={!supports("failure.stay")}>{t.failureStay}</option>
+                      </select></label>
+                    </div>
+                    <div className="pair">
+                      <label>{t.logPolicy}<select value={options.logPolicy}
+                        onChange={event => setOption("logPolicy", event.target.value)}>
+                        <option value="always">{t.logAlways}</option>
+                        <option value="on_error" disabled={!supports("logging.on_error")}>{t.logOnError}</option>
+                        <option value="never" disabled={!supports("logging.never")}>{t.logNever}</option>
+                      </select></label>
+                      <label>{t.logSyncInterval}<input type="number" min="0" max="60000" required
+                        value={options.logSyncIntervalMs} onChange={event => setOption("logSyncIntervalMs", event.target.value)} /></label>
+                    </div>
+                    <label>{t.processingProfile}<select value={options.initialProfile}
+                      onChange={event => setOption("initialProfile", event.target.value)}>
+                      <option value="balanced">{t.profileBalanced}</option>
+                      <option value="long_matches" disabled={!supports("processing.profile.long_matches")}>{t.profileLongMatches}</option>
+                      <option value="high_compression" disabled={!supports("processing.profile.high_compression")}>{t.profileHighCompression}</option>
+                      <option value="incompressible" disabled={!supports("processing.profile.incompressible")}>{t.profileIncompressible}</option>
+                    </select></label>
+                    <h3>{t.ioPolicy}</h3>
+                    <div className="advanced-number-grid">
+                      <label>{t.noProgressSeconds}<input type="number" min="1" max="3600" required value={options.ioPolicy.noProgressSeconds}
+                        onChange={event => setIoOption("noProgressSeconds", event.target.value)} /></label>
+                      <label>{t.failureGraceSeconds}<input type="number" min="1" max="120" required value={options.ioPolicy.failureGraceSeconds}
+                        onChange={event => setIoOption("failureGraceSeconds", event.target.value)} /></label>
+                      <label>{t.shutdownGraceSeconds}<input type="number" min="1" max="120" required value={options.ioPolicy.shutdownGraceSeconds}
+                        onChange={event => setIoOption("shutdownGraceSeconds", event.target.value)} /></label>
+                      <label>{t.transientRetries}<input type="number" min="0" max="8" required value={options.ioPolicy.transientRetries}
+                        onChange={event => setIoOption("transientRetries", event.target.value)} /></label>
+                      <label>{t.retryDelayMs}<input type="number" min="1" max="2000" required value={options.ioPolicy.retryDelayMs}
+                        onChange={event => setIoOption("retryDelayMs", event.target.value)} /></label>
+                      <label>{t.probeIntervalMs}<input type="number" min="100" max="5000" required value={options.probeIntervalMs}
+                        onChange={event => setOption("probeIntervalMs", event.target.value)} /></label>
+                    </div>
+                  </fieldset>
+                </details>
               </section>
               <section className="output">
                 <h2>{t.output}</h2>
@@ -360,6 +510,7 @@ function App() {
       <dl>
         <dt>{t.steps[0]}</dt><dd>{sourceSummary}</dd>
         <dt>{t.steps[1]}</dt><dd>{t.usb} · NTFS</dd>
+        <dt>{t.backupVerification}</dt><dd>{options.verifyAfterWrite ? t.verifyOn : t.verifyOff}</dd>
       </dl>
     </>;
   }

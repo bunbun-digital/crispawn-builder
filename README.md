@@ -23,11 +23,13 @@ The Builder stores downloaded ISOs on the PC. It reuses the current release and 
 
 1. Open CRISPAWN Builder. Choose **This PC** to see its internal disks, or **Another PC** to target every internal disk on the PC where LiveOS boots. With the currently supported ISO, you cannot copy only some disks.
 2. Review the **USB hard drive** backup destination.
-3. On **Review**, choose the delay before backup starts, the LiveOS language, and what happens after completion. Choose **Bootable USB** and select a USB disk by its name, size, disk number, and drive letter. An unprepared disk is marked as needing initialization.
+3. On **Review**, choose the delay before backup starts, the LiveOS language, and what happens after completion. **Backup verification** controls readback after copying; **Advanced settings** contains logging, error behavior, processing options, and timeouts. Choose **Bootable USB** and select a USB disk by its name, size, disk number, and drive letter. An unprepared disk is marked as needing initialization.
 4. Click **Write USB** and review the selected disk and action. Initialization erases every partition and all data on that disk. Approve the Windows prompt and keep the USB connected until readback verification finishes.
 5. When **Complete** appears, remove the USB drive. Boot it on the target PC and check the backup result.
 
 On an already prepared CRISPAWN USB disk, the Builder retains the NTFS data partition. On an unprepared disk, it creates a GPT layout with a 256 MiB EFI System Partition and an NTFS data partition using the remaining space. It rechecks the selected USB's identity and layout before changing it.
+
+**Skip readback verification** applies to LiveOS backup copying. It does not skip the Builder's checks when creating a bootable USB. The option is unavailable when the published ISO does not declare support for it.
 
 ## Create an ISO with settings
 

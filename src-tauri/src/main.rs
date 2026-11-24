@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use crispawn_builder_core::efi;
-use crispawn_builder_core::image::Writer;
+use crispawn_builder_core::image::{self, ReleaseSupport, Writer};
 use crispawn_builder_core::release;
 use crispawn_builder_core::usb::{self, InternalDisk, UsbDisk};
-use crispawn_builder_core::{Completion, Language, Project, plan};
+use crispawn_builder_core::{Completion, Language, Project, RuntimeOptions, validate_project};
 use serde::Deserialize;
 use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
@@ -17,6 +17,7 @@ struct Settings {
     language: SettingsLanguage,
     start_seconds: u32,
     poweroff_seconds: Option<u32>,
+    options: RuntimeOptions,
 }
 
 #[derive(Deserialize, PartialEq, Eq)]
@@ -38,13 +39,14 @@ impl Settings {
             completion: self
                 .poweroff_seconds
                 .map_or(Completion::Stay, |seconds| Completion::PowerOff { seconds }),
+            options: self.options,
         }
     }
 }
 
 #[tauri::command]
-fn plan_settings(settings: Settings) -> Result<String, &'static str> {
-    plan(&settings.project())
+fn plan_settings(settings: Settings) -> Result<String, String> {
+    crispawn_builder_core::runtime::preview(&settings.project())
 }
 
 #[tauri::command]
@@ -62,6 +64,16 @@ async fn internal_disks() -> Result<Vec<InternalDisk>, String> {
 }
 
 #[tauri::command]
+async fn release_support() -> Result<ReleaseSupport, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let latest = release::latest_iso(|_| {})?;
+        image::release_support(&latest.path, latest.tag)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn save_usb(
     app: tauri::AppHandle,
     disk: UsbDisk,
@@ -73,7 +85,7 @@ async fn save_usb(
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = settings.project();
-        plan(&project)?;
+        validate_project(&project)?;
         match pc_mode.as_str() {
             "local" => {
                 let internal = usb::list_internal()?;
@@ -161,7 +173,7 @@ fn usb_progress(app: &tauri::AppHandle, phase: &str, percent: u8) {
 async fn save_iso(app: tauri::AppHandle, settings: Settings) -> Result<bool, String> {
     let writer = Writer::new();
     let project = settings.project();
-    plan(&project)?;
+    validate_project(&project)?;
     tauri::async_runtime::spawn_blocking(move || {
         let Some(output) = app
             .dialog()
@@ -211,6 +223,7 @@ fn main() {
             plan_settings,
             usb_disks,
             internal_disks,
+            release_support,
             save_usb,
             save_iso,
             exit_builder
