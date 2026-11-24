@@ -45,6 +45,7 @@ function App() {
   const [usbDiskId, setUsbDiskId] = useState("");
   const [reinitializeUsb, setReinitializeUsb] = useState(false);
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
+  const [writtenIsoName, setWrittenIsoName] = useState<string | null>(null);
   const t = strings[locale];
   const selectedUsb = usbDisks.find(disk => usbKey(disk) === usbDiskId);
   const writeStage = (usbProgress?.percent ?? 0) >= 73 ? 2 : (usbProgress?.percent ?? 0) >= 25 ? 1 : 0;
@@ -89,6 +90,7 @@ function App() {
     setMessage("");
     setError("");
     setUsbProgress(null);
+    setWrittenIsoName(null);
   }
 
   function go(next: Step) {
@@ -123,9 +125,11 @@ function App() {
           setUsbProgress(event.payload);
           setStep(3);
         });
-        if (await invoke<boolean>("save_usb", { disk, reinitializeUsb, settings, pcMode,
-          selectedDiskNumbers, uiLanguage: locale })) {
+        const isoName = await invoke<string | null>("save_usb", { disk, reinitializeUsb, settings, pcMode,
+          selectedDiskNumbers, uiLanguage: locale });
+        if (isoName) {
           setUsbProgress({ phase: "complete", percent: 100 });
+          setWrittenIsoName(isoName);
           setMessage(t.usbSaved);
           setStep(4);
         } else {
@@ -324,6 +328,9 @@ function App() {
               {output === "usb" && selectedUsb && <div className="completion-target"><ChoiceIcon kind="usb" />
                 <span><strong>{selectedUsb.friendlyName}</strong>
                   <small>{t.diskNumber} {selectedUsb.diskNumber} · {Math.round(selectedUsb.sizeBytes / 1_000_000_000)} GB · {selectedUsb.driveLetter ?? t.noDriveLetter}</small></span></div>}
+              {output === "usb" && writtenIsoName && <div className="completion-file">
+                <span>{t.writtenIsoName}</span><strong>{writtenIsoName}</strong>
+              </div>}
             </div>
           </section>}
           {step <= 2 && error && <p className="error" role="alert">{error}</p>}

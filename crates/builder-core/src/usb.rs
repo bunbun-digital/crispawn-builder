@@ -255,7 +255,7 @@ pub fn install_selected(
     reinitialize: bool,
     report_dir: &Path,
     on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
+) -> Result<String, String> {
     install_selected_inner(
         iso,
         efi_dir,
@@ -265,7 +265,15 @@ pub fn install_selected(
         report_dir,
         None,
         on_progress,
+    )?;
+    let result: Value = serde_json::from_slice(
+        &fs::read(report_dir.join("result.json")).map_err(|e| e.to_string())?,
     )
+    .map_err(|e| e.to_string())?;
+    result["iso_name"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "USB result is missing the written ISO filename".into())
 }
 
 fn install_selected_inner(
@@ -458,6 +466,7 @@ fn install_with_settings(
     let value: Value = serde_json::from_slice(&fs::read(&result).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     if value["iso_sha256"] != expected_iso.to_ascii_lowercase()
+        || value["iso_name"] != "crispawn.iso"
         || value["disk_unique_id"] != disk_unique_id
         || value["data_volume_label"] != "CRISPAWN"
         || value["data_directory"] != "crispawn"

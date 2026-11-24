@@ -70,7 +70,7 @@ async fn save_usb(
     pc_mode: String,
     selected_disk_numbers: Vec<u32>,
     ui_language: String,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = settings.project();
         plan(&project)?;
@@ -130,15 +130,15 @@ async fn save_usb(
         };
         if !app.dialog().message(text).title("CRISPAWN Builder")
             .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel).blocking_show() {
-            return Ok(false);
+            return Ok(None);
         }
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
+        let written_iso_name = usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
-        Ok(true)
+        Ok(Some(written_iso_name))
     }).await.map_err(|error| error.to_string())?
 }
 

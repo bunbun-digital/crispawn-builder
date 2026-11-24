@@ -28,6 +28,7 @@ export const strings = {
     operationFailed: "処理を完了できませんでした", operationInProgress: "処理中です。完了までお待ちください。",
     backToReview: "確認画面に戻る", exit: "終了",
     usbCompleteTitle: "起動用USBが完成しました", isoCompleteTitle: "ISOファイルが完成しました",
+    writtenIsoName: "USBに書き込んだISOファイル名",
     usbProgress: {
       checkingRelease: "GitHubの最新リリースを確認中", downloadingIso: "GitHubからISOを取得中（保存済みなら再利用）", configuringIso: "ISOに設定を組み込み中",
       checkingIso: "ISOを照合中", extractingEfi: "ISOから署名済み起動ファイルを取り出し中",
@@ -69,6 +70,7 @@ export const strings = {
     operationFailed: "The operation did not complete", operationInProgress: "Working. Please wait for completion.",
     backToReview: "Back to review", exit: "Exit",
     usbCompleteTitle: "Bootable USB is ready", isoCompleteTitle: "ISO file is ready",
+    writtenIsoName: "ISO filename on the USB",
     usbProgress: {
       checkingRelease: "Checking the newest GitHub release", downloadingIso: "Getting ISO from GitHub (or reusing cached copy)", configuringIso: "Adding settings to ISO",
       checkingIso: "Checking ISO", extractingEfi: "Extracting signed boot files from ISO",
