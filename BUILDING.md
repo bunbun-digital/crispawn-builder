@@ -6,7 +6,7 @@ This guide is for developers building the Windows community edition from source.
 
 - Windows with WebView2
 - Git, Node.js and npm
-- Rust with the MSVC target
+- Rust through rustup with the MSVC target. `rust-toolchain.toml` pins the toolchain (currently 1.100.0) so builds are reproducible; rustup installs and selects it automatically in this repository. Do not override it with `+stable` or another toolchain.
 - Microsoft C++ Build Tools and Windows SDK
 
 Dependency versions are pinned in `Cargo.lock` and `package-lock.json`. The desktop app downloads the newest published CRISPAWN community ISO from `bunbun-digital/crispawn` and caches it under `%LOCALAPPDATA%\CRISPAWN\Builder\iso-cache`.
@@ -18,7 +18,7 @@ git clone https://github.com/bunbun-digital/crispawn-builder.git
 Set-Location crispawn-builder
 npm ci
 npm run build
-& "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable build --locked -p crispawn-builder-desktop --features custom-protocol
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" build --locked -p crispawn-builder-desktop --features custom-protocol
 ```
 
 The executable is `build/rust/debug/crispawn-builder-desktop.exe`. The interface can be developed with `npm run tauri dev`. Build outputs are ignored by Git.
@@ -26,7 +26,7 @@ The executable is `build/rust/debug/crispawn-builder-desktop.exe`. The interface
 ## Command line tool
 
 ```powershell
-& "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable build --locked -p crispawn-builder-core
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" build --locked -p crispawn-builder-core
 & .\build\rust\debug\crispawn-builder.exe --help
 ```
 
@@ -40,8 +40,8 @@ ISO configuration is implemented in Rust. It reads the ISO9660 image, updates `/
 
 ```powershell
 npm run build
-& "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable test --locked -p crispawn-builder-core
-& "$env:USERPROFILE\.cargo\bin\cargo.exe" +stable build --locked -p crispawn-builder-desktop --features custom-protocol
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test --locked -p crispawn-builder-core
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" build --locked -p crispawn-builder-desktop --features custom-protocol
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\usb-writer-preflight.ps1
 ```
 
