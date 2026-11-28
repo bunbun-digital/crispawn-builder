@@ -35,6 +35,11 @@ $script:mockDisk = [pscustomobject]@{
 }
 $script:mockParts = @()
 $script:mockDirty = $false
+$script:mockFixed = $false
+$script:mockMsr = [pscustomobject]@{
+    PartitionNumber = 1; Offset = [UInt64]17408; Size = [UInt64]16777216
+    GptType = '{e3c9e316-0b5c-4db8-817d-f92df00215ae}'; MbrType = ''
+}
 $script:calls = [System.Collections.Generic.List[string]]::new()
 function Get-Disk { [CmdletBinding()] param([int]$Number) return $script:mockDisk }
 function Get-Partition {
@@ -60,12 +65,14 @@ function Initialize-Disk {
     if ($script:mockDisk.PartitionStyle -ne 'RAW') { throw 'Mock disk is already initialized.' }
     $script:calls.Add('initialize')
     $script:mockDisk.PartitionStyle = $PartitionStyle
+    if ($script:mockFixed) { $script:mockParts = @($script:mockMsr) }
 }
 function Set-Disk {
     [CmdletBinding()] param([int]$Number,[string]$PartitionStyle)
     if ($script:mockDisk.PartitionStyle -ne 'MBR' -or $script:mockParts.Count -ne 0) { throw 'Mock disk cannot be converted.' }
     $script:calls.Add('convert')
     $script:mockDisk.PartitionStyle = $PartitionStyle
+    if ($script:mockFixed) { $script:mockParts = @($script:mockMsr) }
 }
 function New-Partition {
     [CmdletBinding()] param([int]$DiskNumber,[UInt64]$Size,[switch]$UseMaximumSize,[string]$GptType)
@@ -73,8 +80,8 @@ function New-Partition {
     $number = $script:mockParts.Count + 1
     $part = [pscustomobject]@{
         PartitionNumber = $number
-        Offset = if ($number -eq 1) { [UInt64]1048576 } else { [UInt64]269484032 }
-        Size = if ($number -eq 1) { $Size } else { [UInt64]63000000000 }
+        Offset = if ($UseMaximumSize) { [UInt64]269484032 } else { [UInt64]1048576 }
+        Size = if ($UseMaximumSize) { [UInt64]63000000000 } else { $Size }
         GptType = $GptType; MbrType = ''
     }
     $script:mockParts = @($script:mockParts) + @($part)
@@ -191,5 +198,49 @@ $request.iso_sha256 = (Get-FileHash -LiteralPath $updatedIso -Algorithm SHA256).
 $null = Install-BootIso $mount
 if ((FileHash (Join-Path $mount 'crispawn.iso')) -cne $request.iso_sha256) {
     throw 'Boot ISO update did not replace the previous version.'
+}
+# Fixed USB disk (HDD/SSD): Windows adds an MSR when it initializes GPT.
+$request.iso = $iso
+$request.iso_sha256 = $hash
+$request.initialize = $true
+$request.layout_stamp = 'RAW|'
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$script:mockFixed = $true
+$script:mockParts = @()
+$script:mockDisk.PartitionStyle = 'RAW'
+$script:calls.Clear()
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Fixed USB preflight failed.' }
+Initialize-SelectedUsb
+if (!$script:calls.Contains('initialize') -or $script:mockParts.Count -ne 3) { throw 'Fixed USB initialization path failed.' }
+$null = Assert-Target
+if ($script:targetEsp.PartitionNumber -ne 2 -or $script:targetData.PartitionNumber -ne 3) {
+    throw 'ESP and data partitions were not found after the MSR.'
+}
+if (Get-DataVolumeDirty) { throw 'Fixed USB data volume was reported dirty.' }
+$request.initialize = $false
+$request.layout_stamp = 'GPT|' + (($script:mockParts | ForEach-Object {
+    [string]$_.PartitionNumber + ':' + [string]$_.Offset + ':' + [string]$_.Size + ':' + [string]$_.GptType + ':' + [string]$_.MbrType
+}) -join '|')
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+$result = . $helper -RequestPath $requestPath -Preflight
+if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Prepared fixed USB preflight failed.' }
+# An MSR anywhere but first, or an oversized one, is not the CRISPAWN layout.
+foreach ($bad in @(
+    @($script:mockParts[1], $script:mockParts[0], $script:mockParts[2]),
+    @(([pscustomobject]@{ PartitionNumber = 1; Offset = [UInt64]17408; Size = [UInt64]1073741824
+        GptType = '{e3c9e316-0b5c-4db8-817d-f92df00215ae}'; MbrType = '' }), $script:mockParts[1], $script:mockParts[2]))) {
+    $number = 0
+    $script:mockParts = @($bad | ForEach-Object { $number++; $c = $_.PSObject.Copy(); $c.PartitionNumber = $number; $c })
+    $request.layout_stamp = 'GPT|' + (($script:mockParts | ForEach-Object {
+        [string]$_.PartitionNumber + ':' + [string]$_.Offset + ':' + [string]$_.Size + ':' + [string]$_.GptType + ':' + [string]$_.MbrType
+    }) -join '|')
+    $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+    try {
+        $null = . $helper -RequestPath $requestPath -Preflight
+        throw 'Invalid MSR layout was accepted.'
+    } catch {
+        if ($_.Exception.Message -ne 'USB is not the prepared CRISPAWN layout.') { throw }
+    }
 }
 Write-Output 'USB writer preflight mock passed.'

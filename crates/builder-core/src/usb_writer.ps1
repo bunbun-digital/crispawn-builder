@@ -47,17 +47,28 @@ function Assert-Identity([bool]$checkLayout) {
     }
     return $disk
 }
+# Windows adds a Microsoft Reserved partition when it initializes a fixed USB disk
+# (HDD/SSD) as GPT; removable flash media get none. Accept it only before the ESP.
+$MsrType = '{e3c9e316-0b5c-4db8-817d-f92df00215ae}'
+$EspType = '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}'
+$DataType = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'
+$script:targetEsp = $null
+$script:targetData = $null
 function Assert-Target {
     $disk = Assert-Identity (!$initialize)
     if ($disk.PartitionStyle -ne 'GPT') { throw 'USB is not GPT.' }
-    $parts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction Stop)
-    if ($parts.Count -ne 2 -or $parts[0].PartitionNumber -ne 1 -or
-        $parts[1].PartitionNumber -ne 2 -or
-        $parts[0].GptType -ine '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -or
-        $parts[1].GptType -ine '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -or
+    $parts = @(Get-Partition -DiskNumber $disk.Number -ErrorAction Stop | Sort-Object PartitionNumber)
+    if ($parts.Count -eq 3 -and $parts[0].GptType -ieq $MsrType -and $parts[0].Size -le 128MB) {
+        $parts = @($parts[1], $parts[2])
+    }
+    if ($parts.Count -ne 2 -or
+        $parts[0].GptType -ine $EspType -or
+        $parts[1].GptType -ine $DataType -or
         $parts[0].Size -ne 256MB) {
         throw 'USB is not the prepared CRISPAWN layout.'
     }
+    $script:targetEsp = $parts[0]
+    $script:targetData = $parts[1]
     $dataVolume = Get-Volume -Partition $parts[1]
     if ($dataVolume.FileSystem -ne 'NTFS' -or $dataVolume.FileSystemLabel -notin @('PERFECTBACKUP','CRISPAWN')) {
         throw 'USB filesystem or label changed.'
@@ -66,7 +77,7 @@ function Assert-Target {
 }
 function Get-DataVolumeDirty {
     $disk = Assert-Target
-    $partition = Get-Partition -DiskNumber $disk.Number -PartitionNumber 2 -ErrorAction Stop
+    $partition = Get-Partition -DiskNumber $disk.Number -PartitionNumber $script:targetData.PartitionNumber -ErrorAction Stop
     $volume = Get-Volume -Partition $partition -ErrorAction Stop
     if ($volume.FileSystem -ne 'NTFS' -or !$volume.Path) {
         throw 'USB_NTFS_STATE_UNKNOWN: The data volume could not be identified.'
@@ -105,9 +116,9 @@ function Initialize-SelectedUsb {
     }
     $disk = Assert-Identity $false
     if ($disk.PartitionStyle -ne 'GPT') { throw 'USB could not be converted to GPT.' }
-    $newEsp = New-Partition -DiskNumber $disk.Number -Size 256MB -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -ErrorAction Stop
+    $newEsp = New-Partition -DiskNumber $disk.Number -Size 256MB -GptType $EspType -ErrorAction Stop
     $null = Format-Volume -Partition $newEsp -FileSystem FAT32 -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
-    $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -ErrorAction Stop
+    $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType $DataType -ErrorAction Stop
     $null = Format-Volume -Partition $newData -FileSystem NTFS -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
 }
 function FileHash([string]$path) {
@@ -251,8 +262,8 @@ try {
         Initialize-SelectedUsb
     }
     $disk = Assert-Target
-    $esp = Get-Partition -DiskNumber $disk.Number -PartitionNumber 1
-    $data = Get-Partition -DiskNumber $disk.Number -PartitionNumber 2
+    $esp = Get-Partition -DiskNumber $disk.Number -PartitionNumber $script:targetEsp.PartitionNumber
+    $data = Get-Partition -DiskNumber $disk.Number -PartitionNumber $script:targetData.PartitionNumber
     $fat = Read-Sector $esp.Offset
     $ntfs = Read-Sector $data.Offset
     if ([Text.Encoding]::ASCII.GetString($fat,82,8) -cne 'FAT32   ' -or
@@ -261,7 +272,7 @@ try {
     }
     $bootUuid = [BitConverter]::ToUInt32($fat,67).ToString('X8').Insert(4,'-')
     $dataUuid = [BitConverter]::ToUInt64($ntfs,72).ToString('X16')
-    Add-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 2 -AccessPath $dataMount
+    Add-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetData.PartitionNumber -AccessPath $dataMount
     $dataMounted = $true
     $legacyDirectory = Join-Path $dataMount 'perfect-backup'
     $crispawnDirectory = Join-Path $dataMount 'crispawn'
@@ -276,7 +287,7 @@ try {
     if ((Test-Path -LiteralPath $legacyDirectory) -and (Test-Path -LiteralPath $crispawnDirectory)) {
         throw 'Both legacy and CRISPAWN data directories exist; refusing to merge them.'
     }
-    Add-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 1 -AccessPath $mount
+    Add-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetEsp.PartitionNumber -AccessPath $mount
     $mounted = $true
     Report-Progress 'writingIso' 25
     $isoName = Install-BootIso $mount
@@ -344,11 +355,11 @@ sleep 30
         $null = Assert-Target
         $null = New-Item -ItemType Directory -Path $crispawnDirectory -ErrorAction Stop
     }
-    $dataVolume = Get-Volume -Partition (Get-Partition -DiskNumber (Assert-Target).Number -PartitionNumber 2)
+    $dataVolume = Get-Volume -Partition (Get-Partition -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetData.PartitionNumber)
     if ($dataVolume.FileSystemLabel -cne 'CRISPAWN') {
         Set-Volume -InputObject $dataVolume -NewFileSystemLabel CRISPAWN
     }
-    if ((Get-Volume -Partition (Get-Partition -DiskNumber (Assert-Target).Number -PartitionNumber 2)).FileSystemLabel -cne 'CRISPAWN' -or
+    if ((Get-Volume -Partition (Get-Partition -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetData.PartitionNumber)).FileSystemLabel -cne 'CRISPAWN' -or
         !(Test-Path -LiteralPath $crispawnDirectory -PathType Container)) {
         throw 'CRISPAWN data volume rename could not be verified.'
     }
@@ -376,11 +387,11 @@ sleep 30
 } finally {
     try {
         if ($dataMounted) {
-            Remove-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 2 -AccessPath $dataMount
+            Remove-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetData.PartitionNumber -AccessPath $dataMount
         }
     } finally {
         if ($mounted) {
-            Remove-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber 1 -AccessPath $mount
+            Remove-PartitionAccessPath -DiskNumber (Assert-Target).Number -PartitionNumber $script:targetEsp.PartitionNumber -AccessPath $mount
         }
     }
 }
@@ -390,7 +401,7 @@ if (!(Wait-DataVolumeClean)) {
     }
     # Only a newly formatted, empty data volume may be repaired automatically.
     $null = Assert-Target
-    $newData = Get-Partition -DiskNumber $request.disk_number -PartitionNumber 2 -ErrorAction Stop
+    $newData = Get-Partition -DiskNumber $request.disk_number -PartitionNumber $script:targetData.PartitionNumber -ErrorAction Stop
     $newVolume = Get-Volume -Partition $newData -ErrorAction Stop
     $null = Repair-Volume -InputObject $newVolume -OfflineScanAndFix -ErrorAction Stop
     if (!(Wait-DataVolumeClean)) {
