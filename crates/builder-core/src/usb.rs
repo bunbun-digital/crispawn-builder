@@ -317,6 +317,40 @@ fn install_selected_inner(
     )
 }
 
+/// Checks that the EFI bundle was extracted from the ISO being written.
+fn check_efi_bundle(boot: &Value, expected_iso: &str) -> Result<(), String> {
+    if boot["kind"] != "crispawn.development_efi_files"
+        && boot["kind"] != "crispawn.github_release_efi_files"
+        || boot["network_driver_profile"] != "none"
+        || boot["network_hardware_drivers"] != false
+    {
+        return Err("EFI_DIRECTORY is not a Wi-Fi-free CRISPAWN EFI bundle. \
+                    Create it with `efi-extract BASE.iso EFI_DIRECTORY` or `release-efi-extract EFI_DIRECTORY`."
+            .into());
+    }
+    let bundle_iso = boot["iso_sha256"].as_str().unwrap_or_default();
+    if !bundle_iso.eq_ignore_ascii_case(expected_iso) {
+        return Err(format!(
+            "The EFI bundle was extracted from ISO {bundle_iso}, but ISO_SHA256 is {}. \
+             Pass the base ISO used for `efi-extract` and its SHA-256. \
+             A configured ISO created by `iso` cannot be written with `usb`.",
+            expected_iso.to_ascii_lowercase()
+        ));
+    }
+    Ok(())
+}
+
+/// The writer creates the report directory itself so reports never mix runs.
+fn check_new_report_dir(report_dir: &Path) -> Result<(), String> {
+    if report_dir.exists() {
+        return Err(format!(
+            "REPORT_DIR already exists: {}. Specify a path that does not exist yet; it is created for this run's report.",
+            report_dir.display()
+        ));
+    }
+    Ok(())
+}
+
 fn install_with_settings(
     iso: &Path,
     efi_dir: &Path,
@@ -348,16 +382,7 @@ fn install_with_settings(
     let boot: Value =
         serde_json::from_slice(&fs::read(efi_dir.join("boot.json")).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    if boot["kind"] != "crispawn.development_efi_files"
-        && boot["kind"] != "crispawn.github_release_efi_files"
-        || boot["iso_sha256"]
-            .as_str()
-            .is_none_or(|hash| !hash.eq_ignore_ascii_case(expected_iso))
-        || boot["network_driver_profile"] != "none"
-        || boot["network_hardware_drivers"] != false
-    {
-        return Err("EFI bundle does not match the Wi-Fi-free ISO".into());
-    }
+    check_efi_bundle(&boot, expected_iso)?;
     let mut efi = serde_json::Map::new();
     for name in ["shimx64.efi", "grubx64.efi", "mmx64.efi"] {
         let expected = boot["files"][name]["sha256"]
@@ -375,9 +400,7 @@ fn install_with_settings(
         }
         efi.insert(name.into(), json!(actual));
     }
-    if report_dir.exists() {
-        return Err("Choose a new report directory".into());
-    }
+    check_new_report_dir(report_dir)?;
     fs::create_dir_all(report_dir).map_err(|e| e.to_string())?;
     let report_dir = ordinary_windows_path(&report_dir.canonicalize().map_err(|e| e.to_string())?)?;
     let mut request = json!({
@@ -494,5 +517,50 @@ fn read_progress(path: &Path) -> Option<UsbProgress> {
         Some(progress)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "a9b7232580f468f5b052657a135d219b771a5017dd62503366a1270c69530d3e";
+    const CONFIGURED: &str = "afc997d46970bb9c5d6a318f7dc8d771410e411551c886a6c3bc0b43193885ad";
+
+    fn bundle() -> Value {
+        json!({
+            "kind": "crispawn.github_release_efi_files",
+            "iso_sha256": BASE,
+            "network_driver_profile": "none",
+            "network_hardware_drivers": false
+        })
+    }
+
+    #[test]
+    fn efi_bundle_accepts_its_base_iso() {
+        assert!(check_efi_bundle(&bundle(), &BASE.to_ascii_uppercase()).is_ok());
+    }
+
+    #[test]
+    fn efi_bundle_mismatch_points_to_base_iso() {
+        let error = check_efi_bundle(&bundle(), CONFIGURED).unwrap_err();
+        assert!(error.contains(BASE) && error.contains(CONFIGURED));
+        assert!(error.contains("Pass the base ISO used for `efi-extract`"));
+    }
+
+    #[test]
+    fn efi_bundle_with_network_drivers_is_rejected() {
+        let mut boot = bundle();
+        boot["network_hardware_drivers"] = json!(true);
+        let error = check_efi_bundle(&boot, BASE).unwrap_err();
+        assert!(error.contains("efi-extract BASE.iso EFI_DIRECTORY"));
+    }
+
+    #[test]
+    fn existing_report_dir_is_named_in_error() {
+        let existing = tempfile::tempdir().unwrap();
+        let error = check_new_report_dir(existing.path()).unwrap_err();
+        assert!(error.contains(&existing.path().display().to_string()));
+        assert!(check_new_report_dir(&existing.path().join("new-report")).is_ok());
     }
 }

@@ -1,8 +1,19 @@
 # Copyright (c) 2026 bunbun-digital and contributors. SPDX-License-Identifier: Apache-2.0
 # Mock the storage cmdlets. This test must never access or change a physical disk.
+# Runs from a source checkout or from a release package, where usb_writer.ps1 sits beside this test.
+param([string]$WriterPath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$root = Join-Path $PSScriptRoot ('..\build\usb-preflight-' + [guid]::NewGuid().ToString('N'))
+if (!$WriterPath) {
+    $WriterPath = Join-Path $PSScriptRoot '..\crates\builder-core\src\usb_writer.ps1'
+    if (!(Test-Path -LiteralPath $WriterPath)) { $WriterPath = Join-Path $PSScriptRoot 'usb_writer.ps1' }
+}
+if (!(Test-Path -LiteralPath $WriterPath -PathType Leaf)) { throw "USB writer script not found: $WriterPath" }
+$helper = (Resolve-Path -LiteralPath $WriterPath).Path
+$buildDir = Join-Path $PSScriptRoot '..\build'
+$scratch = if (Test-Path -LiteralPath $buildDir -PathType Container) { $buildDir } else { [IO.Path]::GetTempPath() }
+$root = Join-Path $scratch ('usb-preflight-' + [guid]::NewGuid().ToString('N'))
+$preflightFixtureRoot = $root
 $null = New-Item -ItemType Directory -Path $root -Force
 $efi = Join-Path $root 'efi'
 $null = New-Item -ItemType Directory -Path $efi
@@ -91,7 +102,6 @@ function Format-Volume {
     [CmdletBinding(SupportsShouldProcess=$true)] param($Partition,[string]$FileSystem,[string]$NewFileSystemLabel)
     $script:calls.Add('format')
 }
-$helper = Join-Path $PSScriptRoot '..\crates\builder-core\src\usb_writer.ps1'
 $result = . $helper -RequestPath $requestPath -Preflight
 if ($result -ne 'USB_PREFLIGHT_OK') { throw 'Raw USB preflight failed.' }
 if ($script:calls.Count -ne 0) { throw 'Raw preflight mutated a disk.' }
@@ -243,4 +253,6 @@ foreach ($bad in @(
         if ($_.Exception.Message -ne 'USB is not the prepared CRISPAWN layout.') { throw }
     }
 }
+# Keep the fixtures only when a check fails, for inspection.
+Remove-Item -LiteralPath $preflightFixtureRoot -Recurse -Force
 Write-Output 'USB writer preflight mock passed.'
