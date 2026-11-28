@@ -6,7 +6,7 @@ use crispawn_builder_core::image::{self, ReleaseSupport, Writer};
 use crispawn_builder_core::release;
 use crispawn_builder_core::usb::{self, InternalDisk, UsbDisk};
 use crispawn_builder_core::{Completion, Language, Project, RuntimeOptions, validate_project};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
 
@@ -73,6 +73,15 @@ async fn release_support() -> Result<ReleaseSupport, String> {
     .map_err(|error| error.to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsbWritten {
+    release_version: String,
+    /// ESP settings files from an earlier setup that would have overridden the
+    /// settings embedded in the ISO; the writer removed them.
+    removed_esp_settings: Vec<String>,
+}
+
 #[tauri::command]
 async fn save_usb(
     app: tauri::AppHandle,
@@ -82,7 +91,7 @@ async fn save_usb(
     pc_mode: String,
     selected_disk_numbers: Vec<u32>,
     ui_language: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<UsbWritten>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = settings.project();
         validate_project(&project)?;
@@ -152,10 +161,10 @@ async fn save_usb(
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?.as_nanos();
         let report = std::env::temp_dir().join(format!("crispawn-usb-{nonce}"));
-        usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
+        let removed_esp_settings = usb::install_selected(&staged_iso, &efi_dir, &expected, &disk, reinitialize_usb, &report, |progress| {
                 let _ = app.emit("usb-write-progress", progress);
             })?;
-        Ok(Some(latest.tag))
+        Ok(Some(UsbWritten { release_version: latest.tag, removed_esp_settings }))
     }).await.map_err(|error| error.to_string())?
 }
 

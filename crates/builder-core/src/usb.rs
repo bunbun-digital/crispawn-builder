@@ -199,11 +199,13 @@ pub fn install_prepared_with_progress(
         false,
         &mut on_progress,
     )
+    .map(|_| ())
 }
 
 /// Install an ISO whose runtime settings are already embedded in its initramfs.
 /// The LiveOS settings come only from the ISO: the writer removes an ESP
-/// settings file that would otherwise override them.
+/// settings file that would otherwise override them, and this returns the
+/// names it removed.
 pub fn install_selected(
     iso: &Path,
     efi_dir: &Path,
@@ -212,7 +214,7 @@ pub fn install_selected(
     reinitialize: bool,
     report_dir: &Path,
     on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     if !disk.eligible
         || (disk.disk_path.is_empty() && disk.unique_id.is_empty() && disk.serial_number.is_empty())
     {
@@ -293,7 +295,7 @@ fn install_media(
     selected: Option<&UsbDisk>,
     reinitialize: bool,
     mut on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     if !cfg!(windows) {
         return Err("USB installation requires Windows".into());
     }
@@ -401,7 +403,7 @@ fn install_media(
     }
     if preflight {
         println!("USB preflight passed: {}", report_dir.display());
-        return Ok(());
+        return Ok(Vec::new());
     }
     let result = report_dir.join("result.json");
     let value: Value = serde_json::from_slice(&fs::read(&result).map_err(|e| e.to_string())?)
@@ -413,25 +415,31 @@ fn install_media(
         || value["data_directory"] != "crispawn"
         || value["readback_verified"] != true
         || value["ntfs_dirty_verified"] != true
-        || !value["removed_esp_settings"].is_array()
     {
         return Err("USB result verification failed".into());
     }
-    if let Some(removed) = value["removed_esp_settings"]
-        .as_array()
-        .filter(|v| !v.is_empty())
-    {
+    let removed = removed_esp_settings(&value)?;
+    if !removed.is_empty() {
         println!(
             "Removed ESP settings that would override the ISO settings: {}",
-            removed
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
+            removed.join(", ")
         );
     }
     println!("USB installed and read back: {}", result.display());
-    Ok(())
+    Ok(removed)
+}
+
+/// ESP settings files the writer removed, as reported in result.json.
+fn removed_esp_settings(result: &Value) -> Result<Vec<String>, String> {
+    result["removed_esp_settings"]
+        .as_array()
+        .ok_or("USB result verification failed")?
+        .iter()
+        .map(|name| match name.as_str() {
+            Some(name @ ("crispawn-config.json" | "perfect-backup.json")) => Ok(name.to_owned()),
+            _ => Err("USB result verification failed".to_owned()),
+        })
+        .collect()
 }
 
 fn read_progress(path: &Path) -> Option<UsbProgress> {
@@ -489,6 +497,32 @@ mod tests {
         boot["network_hardware_drivers"] = json!(true);
         let error = check_efi_bundle(&boot, BASE).unwrap_err();
         assert!(error.contains("efi-extract BASE.iso EFI_DIRECTORY"));
+    }
+
+    #[test]
+    fn removed_esp_settings_accepts_only_known_names() {
+        assert_eq!(
+            removed_esp_settings(&json!({"removed_esp_settings": []})),
+            Ok(vec![])
+        );
+        assert_eq!(
+            removed_esp_settings(
+                &json!({"removed_esp_settings": ["crispawn-config.json", "perfect-backup.json"]})
+            ),
+            Ok(vec![
+                "crispawn-config.json".to_owned(),
+                "perfect-backup.json".to_owned()
+            ])
+        );
+        for bad in [
+            json!({}),
+            json!({"removed_esp_settings": null}),
+            json!({"removed_esp_settings": "crispawn-config.json"}),
+            json!({"removed_esp_settings": ["crispawn.iso"]}),
+            json!({"removed_esp_settings": [1]}),
+        ] {
+            assert!(removed_esp_settings(&bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
