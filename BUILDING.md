@@ -49,11 +49,20 @@ The USB writer preflight test also runs from a release package when `usb_writer.
 
 Tests cover settings validation, ISO and initramfs handling, USB layout checks, FAT extraction, and rejection of unknown ISOs. A build or fixture test does not establish that a physical USB boots or completes a backup. Record real hardware acceptance separately.
 
+## Release package
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1 [-Destination DIR] [-SignScript SIGN.ps1]
+```
+
+The script builds the UI and release executables, runs the core tests, and creates `crispawn-builder-oss-<UTC>-<commit>\` with `manifest.json` (SHA-256 of every file) and `LATEST.json` under `build\package` or `-Destination`. The desktop executable embeds the UI, so no `ui\` folder is shipped. `tests\` contains the preflight test and `usb_writer.ps1`, and the script runs that test inside the package. `-SignScript` is called as `SIGN.ps1 -Path EXE` for each executable before hashing; unsigned executables produce a warning, and an invalid signature stops packaging. The working tree must be clean unless `-AllowDirty` is passed.
+
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `.cargo/config.toml` | Keeps Rust build output under the ignored `build/rust/` directory |
+| `scripts/package.ps1` | Builds, tests, and packages the release executables |
 | `ui/` | Vite entry point, React interface, and language strings |
 | `src-tauri/` | Tauri desktop shell and Windows dialogs |
 | `crates/builder-core/` | Settings, ISO, EFI, and USB controllers plus CLI |
