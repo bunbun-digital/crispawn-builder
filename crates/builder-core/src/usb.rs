@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::image::Writer;
-use crate::{Project, plan};
 
 const HELPER: &str = include_str!("usb_writer.ps1");
 const MIN_USB_BYTES: u64 = 512 * 1024 * 1024;
@@ -187,7 +186,7 @@ pub fn install_prepared_with_progress(
     preflight: bool,
     mut on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
-    install_prepared_with_settings(
+    install_media(
         iso,
         efi_dir,
         expected_iso,
@@ -197,60 +196,14 @@ pub fn install_prepared_with_progress(
         report_dir,
         preflight,
         None,
+        false,
         &mut on_progress,
     )
 }
 
-pub fn install_prepared_with_settings(
-    iso: &Path,
-    efi_dir: &Path,
-    expected_iso: &str,
-    disk_number: u32,
-    disk_unique_id: &str,
-    disk_bytes: u64,
-    report_dir: &Path,
-    preflight: bool,
-    settings: Option<&Project>,
-    on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
-    install_with_settings(
-        iso,
-        efi_dir,
-        expected_iso,
-        disk_number,
-        disk_unique_id,
-        disk_bytes,
-        report_dir,
-        preflight,
-        settings,
-        None,
-        false,
-        on_progress,
-    )
-}
-
-pub fn install_selected_with_settings(
-    iso: &Path,
-    efi_dir: &Path,
-    expected_iso: &str,
-    disk: &UsbDisk,
-    report_dir: &Path,
-    settings: &Project,
-    on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
-    install_selected_inner(
-        iso,
-        efi_dir,
-        expected_iso,
-        disk,
-        false,
-        report_dir,
-        Some(settings),
-        on_progress,
-    )
-}
-
 /// Install an ISO whose runtime settings are already embedded in its initramfs.
+/// The LiveOS settings come only from the ISO: the writer removes an ESP
+/// settings file that would otherwise override them.
 pub fn install_selected(
     iso: &Path,
     efi_dir: &Path,
@@ -258,28 +211,6 @@ pub fn install_selected(
     disk: &UsbDisk,
     reinitialize: bool,
     report_dir: &Path,
-    on_progress: impl FnMut(UsbProgress),
-) -> Result<(), String> {
-    install_selected_inner(
-        iso,
-        efi_dir,
-        expected_iso,
-        disk,
-        reinitialize,
-        report_dir,
-        None,
-        on_progress,
-    )
-}
-
-fn install_selected_inner(
-    iso: &Path,
-    efi_dir: &Path,
-    expected_iso: &str,
-    disk: &UsbDisk,
-    reinitialize: bool,
-    report_dir: &Path,
-    settings: Option<&Project>,
     on_progress: impl FnMut(UsbProgress),
 ) -> Result<(), String> {
     if !disk.eligible
@@ -301,7 +232,7 @@ fn install_selected_inner(
     {
         return Err("Selected USB identity or layout changed. Refresh the USB list.".into());
     }
-    install_with_settings(
+    install_media(
         iso,
         efi_dir,
         expected_iso,
@@ -310,7 +241,6 @@ fn install_selected_inner(
         disk.size_bytes,
         report_dir,
         false,
-        settings,
         Some(disk),
         reinitialize,
         on_progress,
@@ -351,7 +281,7 @@ fn check_new_report_dir(report_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn install_with_settings(
+fn install_media(
     iso: &Path,
     efi_dir: &Path,
     expected_iso: &str,
@@ -360,7 +290,6 @@ fn install_with_settings(
     disk_bytes: u64,
     report_dir: &Path,
     preflight: bool,
-    settings: Option<&Project>,
     selected: Option<&UsbDisk>,
     reinitialize: bool,
     mut on_progress: impl FnMut(UsbProgress),
@@ -418,13 +347,6 @@ fn install_with_settings(
         request["serial_number"] = json!(disk.serial_number);
         request["layout_stamp"] = json!(disk.layout_stamp);
         request["initialize"] = json!(!disk.prepared || reinitialize);
-    }
-    if let Some(project) = settings {
-        let config = plan(project).map_err(str::to_owned)?;
-        let path = report_dir.join("live-config.json");
-        fs::write(&path, config).map_err(|e| e.to_string())?;
-        request["config_path"] = json!(path);
-        request["config_sha256"] = json!(Writer::base_digest(&path)?);
     }
     let request_path = report_dir.join("request.json");
     let helper_path = report_dir.join("usb_writer.ps1");
@@ -491,9 +413,22 @@ fn install_with_settings(
         || value["data_directory"] != "crispawn"
         || value["readback_verified"] != true
         || value["ntfs_dirty_verified"] != true
-        || (settings.is_some() && value["config_sha256"] != request["config_sha256"])
+        || !value["removed_esp_settings"].is_array()
     {
         return Err("USB result verification failed".into());
+    }
+    if let Some(removed) = value["removed_esp_settings"]
+        .as_array()
+        .filter(|v| !v.is_empty())
+    {
+        println!(
+            "Removed ESP settings that would override the ISO settings: {}",
+            removed
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     println!("USB installed and read back: {}", result.display());
     Ok(())

@@ -9,15 +9,14 @@ $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json
 $expectedKeys = @('iso','efi_dir','iso_sha256','efi_sha256','disk_number','disk_unique_id','disk_bytes','report_dir')
 $actualKeys = @($request.PSObject.Properties.Name | Sort-Object) -join ','
 $baseKeys = @($expectedKeys | Sort-Object) -join ','
-$configuredKeys = @($expectedKeys + @('config_path','config_sha256') | Sort-Object) -join ','
 $selectedKeys = @('disk_path','serial_number','layout_stamp','initialize')
 $selectedBaseKeys = @($expectedKeys + $selectedKeys | Sort-Object) -join ','
-$selectedConfiguredKeys = @($expectedKeys + $selectedKeys + @('config_path','config_sha256') | Sort-Object) -join ','
-if ($actualKeys -cnotin @($baseKeys,$configuredKeys,$selectedBaseKeys,$selectedConfiguredKeys)) {
+if ($actualKeys -cnotin @($baseKeys,$selectedBaseKeys)) {
     throw 'Invalid Builder USB request.'
 }
-$hasSelection = $actualKeys -cin @($selectedBaseKeys,$selectedConfiguredKeys)
-$hasConfig = $actualKeys -cin @($configuredKeys,$selectedConfiguredKeys)
+$hasSelection = $actualKeys -ceq $selectedBaseKeys
+# LiveOS reads settings from the boot volume before the ISO's own; the Builder embeds them in the ISO.
+$EspSettingsNames = @('crispawn-config.json','perfect-backup.json')
 $initialize = $hasSelection -and [bool]$request.initialize
 if ($request.iso_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
     $request.disk_number -lt 0 -or $request.disk_bytes -lt 536870912) {
@@ -121,6 +120,17 @@ function Initialize-SelectedUsb {
     $newData = New-Partition -DiskNumber $disk.Number -UseMaximumSize -GptType $DataType -ErrorAction Stop
     $null = Format-Volume -Partition $newData -FileSystem NTFS -NewFileSystemLabel CRISPAWN -Confirm:$false -ErrorAction Stop
 }
+function Remove-EspSettings([string]$espRoot) {
+    foreach ($name in $EspSettingsNames) {
+        $path = Join-Path $espRoot $name
+        if (Test-Path -LiteralPath $path) {
+            $null = Assert-Target
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $path) { throw "ESP settings file could not be removed: $name" }
+            $name
+        }
+    }
+}
 function FileHash([string]$path) {
     $stream = [IO.File]::Open($path, 'Open', 'Read', 'Read')
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -203,19 +213,6 @@ function Assert-Inputs {
         if ($expected -cnotmatch '^[0-9a-f]{64}$' -or
             (FileHash (Join-Path $request.efi_dir $name)) -cne $expected) {
             throw 'Signed EFI file changed.'
-        }
-    }
-    if ($hasConfig) {
-        $expectedConfig = Join-Path ([IO.Path]::GetFullPath([string]$request.report_dir)) 'live-config.json'
-        if ([IO.Path]::GetFullPath([string]$request.config_path) -cne $expectedConfig -or
-            $request.config_sha256 -cnotmatch '^[0-9a-f]{64}$') {
-            throw 'Invalid LiveOS settings path or digest.'
-        }
-        $configFile = Get-Item -LiteralPath $expectedConfig -Force -ErrorAction Stop
-        if ($configFile.Attributes -band [IO.FileAttributes]::ReparsePoint -or
-            $configFile.Length -lt 1 -or $configFile.Length -gt 65536 -or
-            (FileHash $expectedConfig) -cne $request.config_sha256) {
-            throw 'LiveOS settings changed.'
         }
     }
 }
@@ -331,23 +328,10 @@ sleep 30
         [IO.File]::WriteAllText($destination,$cfg,[Text.Encoding]::ASCII)
         if ([IO.File]::ReadAllText($destination) -cne $cfg) { throw 'GRUB media readback mismatch.' }
     }
-    if ($hasConfig) {
-        $null = Assert-Target
-        $configTarget = Join-Path $mount 'perfect-backup.json'
-        Copy-Item -LiteralPath $request.config_path -Destination $configTarget -Force -ErrorAction Stop
-        if ((FileHash $configTarget) -cne $request.config_sha256) {
-            throw 'LiveOS settings readback mismatch.'
-        }
-    }
     Report-Progress 'verifyingFinal' 95
     if ((FileHash $isoTarget) -cne $request.iso_sha256) { throw 'Final ISO readback mismatch.' }
-    if (!$hasConfig) {
-        $oldConfig = Join-Path $mount 'perfect-backup.json'
-        if (Test-Path -LiteralPath $oldConfig) {
-            $null = Assert-Target
-            Remove-Item -LiteralPath $oldConfig -Force -ErrorAction Stop
-        }
-    }
+    # A settings file on the ESP would silently override the settings embedded in this ISO.
+    $removedEspSettings = @(Remove-EspSettings $mount)
     if (Test-Path -LiteralPath $legacyDirectory) {
         $null = Assert-Target
         Move-Item -LiteralPath $legacyDirectory -Destination $crispawnDirectory -ErrorAction Stop
@@ -372,7 +356,7 @@ sleep 30
         data_uuid = $dataUuid
         iso_name = $isoName
         iso_sha256 = [string]$request.iso_sha256
-        config_sha256 = if ($hasConfig) { [string]$request.config_sha256 } else { $null }
+        removed_esp_settings = $removedEspSettings
         network_profile = 'none'
         ntfs_preserved = !$initialize
         data_volume_label = 'CRISPAWN'
