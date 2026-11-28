@@ -45,6 +45,7 @@ export const strings = {
     backToReview: "確認画面に戻る", exit: "終了",
     usbCompleteTitle: "起動用USBが完成しました", isoCompleteTitle: "ISOファイルが完成しました",
     sourceIsoVersion: "元のISOのバージョン",
+    espSettingsRemoved: (files: string) => `USBに残っていた以前の起動設定（${files}）を削除しました。今回選んだ設定が使われます。`,
     usbProgress: {
       checkingRelease: "GitHubの最新リリースを確認中", downloadingIso: "GitHubからISOを取得中（保存済みなら再利用）", configuringIso: "ISOに設定を組み込み中",
       checkingIso: "ISOを照合中", extractingEfi: "ISOから署名済み起動ファイルを取り出し中",
@@ -103,6 +104,7 @@ export const strings = {
     backToReview: "Back to review", exit: "Exit",
     usbCompleteTitle: "Bootable USB is ready", isoCompleteTitle: "ISO file is ready",
     sourceIsoVersion: "Source ISO release",
+    espSettingsRemoved: (files: string) => `Removed earlier boot settings left on the USB (${files}). The settings you chose now will be used.`,
     usbProgress: {
       checkingRelease: "Checking the newest GitHub release", downloadingIso: "Getting ISO from GitHub (or reusing cached copy)", configuringIso: "Adding settings to ISO",
       checkingIso: "Checking ISO", extractingEfi: "Extracting signed boot files from ISO",

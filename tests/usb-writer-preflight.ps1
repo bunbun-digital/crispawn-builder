@@ -28,13 +28,10 @@ foreach ($name in @('shimx64.efi','grubx64.efi','mmx64.efi')) {
 }
 $report = Join-Path $root 'report'
 $null = New-Item -ItemType Directory -Path $report
-$config = Join-Path $report 'live-config.json'
-[IO.File]::WriteAllText($config, '{}')
 $request = [ordered]@{
     iso = $iso; efi_dir = $efi; iso_sha256 = $hash; efi_sha256 = $efiHashes
     disk_number = 4; disk_unique_id = 'USB-ID'; disk_bytes = [UInt64]64000000000
-    report_dir = $report; config_path = $config
-    config_sha256 = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash.ToLowerInvariant()
+    report_dir = $report
     disk_path = 'USB-PATH'; serial_number = 'USB-SERIAL'; layout_stamp = 'RAW|'; initialize = $true
 }
 $requestPath = Join-Path $root 'request.json'
@@ -209,6 +206,34 @@ $null = Install-BootIso $mount
 if ((FileHash (Join-Path $mount 'crispawn.iso')) -cne $request.iso_sha256) {
     throw 'Boot ISO update did not replace the previous version.'
 }
+# ESP settings files override the ISO's embedded settings; the writer removes them.
+foreach ($name in @('crispawn-config.json','perfect-backup.json')) {
+    [IO.File]::WriteAllText((Join-Path $mount $name), '{}')
+}
+$removed = @(Remove-EspSettings $mount)
+if (($removed -join ',') -cne 'crispawn-config.json,perfect-backup.json' -or
+    (Test-Path -LiteralPath (Join-Path $mount 'crispawn-config.json')) -or
+    (Test-Path -LiteralPath (Join-Path $mount 'perfect-backup.json')) -or
+    !(Test-Path -LiteralPath (Join-Path $mount 'crispawn.iso'))) {
+    throw 'ESP settings override was not removed.'
+}
+if (@(Remove-EspSettings $mount).Count -ne 0) { throw 'Removing absent ESP settings reported a file.' }
+# Requests carrying ESP settings are no longer accepted.
+$plainRequest = $request
+$configured = [ordered]@{}
+foreach ($property in $request.PSObject.Properties) { $configured[$property.Name] = $property.Value }
+$configured.config_path = Join-Path $report 'live-config.json'
+$configured.config_sha256 = '0' * 64
+$configured | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
+try {
+    $null = . $helper -RequestPath $requestPath -Preflight
+    throw 'A request with ESP settings was accepted.'
+} catch {
+    if ($_.Exception.Message -ne 'Invalid Builder USB request.') { throw }
+}
+# The dot-sourced helper replaced $request with the rejected one.
+$request = $plainRequest
+$request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding UTF8
 # Fixed USB disk (HDD/SSD): Windows adds an MSR when it initializes GPT.
 $request.iso = $iso
 $request.iso_sha256 = $hash

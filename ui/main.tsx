@@ -16,6 +16,7 @@ type UsbDisk = { diskNumber: number; friendlyName: string; uniqueId: string; dis
 type InternalDisk = { diskNumber: number; friendlyName: string; sizeBytes: number; busType: string };
 type UsbPhase = keyof typeof strings.ja.usbProgress;
 type UsbProgress = { phase: UsbPhase; percent: number };
+type UsbWritten = { releaseVersion: string; removedEspSettings: string[] };
 type ReleaseSupport = { tag: string; configVersions: number[]; capabilities: string[] };
 type RuntimeInput = {
   backupDirectory: string; startupMode: string; uiMode: string; failureAction: string;
@@ -60,6 +61,7 @@ function App() {
   const [reinitializeUsb, setReinitializeUsb] = useState(false);
   const [usbProgress, setUsbProgress] = useState<UsbProgress | null>(null);
   const [sourceIsoVersion, setSourceIsoVersion] = useState<string | null>(null);
+  const [removedEspSettings, setRemovedEspSettings] = useState<string[]>([]);
   const [releaseSupport, setReleaseSupport] = useState<ReleaseSupport | null>(null);
   const [releaseSupportError, setReleaseSupportError] = useState("");
   const [releaseSupportLoading, setReleaseSupportLoading] = useState(false);
@@ -132,6 +134,7 @@ function App() {
     setError("");
     setUsbProgress(null);
     setSourceIsoVersion(null);
+    setRemovedEspSettings([]);
   }
 
   function go(next: Step) {
@@ -194,11 +197,12 @@ function App() {
           setUsbProgress(event.payload);
           setStep(3);
         });
-        const releaseVersion = await invoke<string | null>("save_usb", { disk, reinitializeUsb, settings, pcMode,
+        const written = await invoke<UsbWritten | null>("save_usb", { disk, reinitializeUsb, settings, pcMode,
           selectedDiskNumbers, uiLanguage: locale });
-        if (releaseVersion) {
+        if (written) {
           setUsbProgress({ phase: "complete", percent: 100 });
-          setSourceIsoVersion(releaseVersion);
+          setSourceIsoVersion(written.releaseVersion);
+          setRemovedEspSettings(written.removedEspSettings);
           setMessage(t.usbSaved);
           setStep(4);
         } else {
@@ -473,6 +477,8 @@ function App() {
             </svg></div>
             <h2>{output === "usb" ? t.usbCompleteTitle : t.isoCompleteTitle}</h2>
             <p className="completion-message" role="status">{message}</p>
+            {output === "usb" && removedEspSettings.length > 0 &&
+              <p className="completion-note">{t.espSettingsRemoved(removedEspSettings.join(", "))}</p>}
             {error && <p className="error" role="alert">{error}</p>}
             <div className="completion-details"><Summary />
               {output === "usb" && selectedUsb && <div className="completion-target"><ChoiceIcon kind="usb" />
